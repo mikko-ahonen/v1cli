@@ -1,0 +1,56 @@
+# v1cli Development Environment
+# Usage:
+#   docker-compose up -d           # Start containers
+#   docker-compose exec dev bash   # Connect to dev shell
+#   docker-compose exec claude bash # Connect to claude shell
+#   docker-compose down            # Stop containers
+
+services:
+  claude:
+    stdin_open: true
+    tty: true
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: claude
+    volumes:
+      - ../../.workspaces/v1:/workspaces
+      - ./:/src
+      - pip-cache:/home/dev/.cache/pip
+    environment:
+      - CLAUDE_CONFIG_DIR=/workspaces/claude
+      - V1_URL=${V1_URL:-}
+      - V1_TOKEN=${V1_TOKEN:-}
+    working_dir: /src/v1cli
+
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: base
+    container_name: v1cli-dev
+
+    # Keep container running
+    stdin_open: true
+    tty: true
+
+    # Mount source code for live development
+    volumes:
+      - ./:/src
+      - pip-cache:/home/dev/.cache/pip
+
+    # Environment variables
+    environment:
+      - V1_URL=${V1_URL:-}
+      - V1_TOKEN=${V1_TOKEN:-}
+
+    working_dir: /src/v1cli
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+volumes:
+  pip-cache:
