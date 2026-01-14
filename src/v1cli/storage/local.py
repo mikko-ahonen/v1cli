@@ -47,13 +47,18 @@ class LocalStorage:
         settings.add_bookmark(name, oid)
         self.save(settings)
 
-    def remove_project_bookmark(self, name: str) -> bool:
-        """Remove a project bookmark."""
+    def remove_project_bookmark(self, identifier: str) -> tuple[str, str] | None:
+        """Remove a project bookmark by name or number.
+
+        Returns:
+            Tuple of (name, oid) if removed, None if not found.
+        """
         settings = self.settings
-        removed = settings.remove_bookmark(name)
+        removed = settings.remove_bookmark(identifier)
         if removed:
             self.save(settings)
-        return removed
+            return (removed.name, removed.oid)
+        return None
 
     def set_default_project(self, oid: str) -> None:
         """Set the default project."""

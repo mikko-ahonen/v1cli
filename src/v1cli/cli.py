@@ -153,17 +153,47 @@ def setup() -> None:
 # =============================================================================
 
 
-@cli.command()
-@click.option("--all", "-a", "include_all", is_flag=True, help="Include all statuses (default: Implementation only)")
-@click.option("--output", "-o", "output_file", type=click.Path(), help="Write output to file")
-@click.option("--format", "-f", "output_format", type=click.Choice(["table", "csv", "json"]), default="table", help="Output format")
-@handle_errors
-def projects(include_all: bool, output_file: str | None, output_format: str) -> None:
-    """List projects (Business Epics with status Implementation)."""
+def _list_projects(show_all: bool, output_file: str | None, output_format: str) -> None:
+    """List projects (helper function)."""
 
     async def _projects() -> None:
         async with V1Client() as client:
-            project_list = await client.get_projects(include_all_statuses=include_all)
+            if show_all:
+                # Fetch all Implementation projects from API
+                project_list = await client.get_projects(include_all_statuses=False)
+            else:
+                # Show only bookmarked projects
+                bookmarks = storage.settings.bookmarks
+                if not bookmarks:
+                    console.print("[yellow]No bookmarked projects.[/yellow]")
+                    console.print("[dim]Use 'v1 bookmarks add <number>' to bookmark a project.[/dim]")
+                    console.print("[dim]Use 'v1 projects list -a' to list all projects.[/dim]")
+                    return
+
+                # Fetch details for bookmarked projects
+                project_list = []
+                for bookmark in bookmarks:
+                    project = await client.get_project_by_number(bookmark.oid.split(":")[-1]) if ":" in bookmark.oid else None
+                    if not project:
+                        # Try fetching by OID directly
+                        results = await client._query(
+                            "Epic",
+                            select=["Name", "Number", "Category.Name", "Super.Name", "Status.Name"],
+                            filter_=[f"ID='{bookmark.oid}'"],
+                        )
+                        if results:
+                            item = results[0]
+                            from v1cli.api.models import Project
+                            project = Project(
+                                oid=item["_oid"],
+                                name=item.get("Name", bookmark.name),
+                                number=item.get("Number", ""),
+                                category=item.get("Category.Name"),
+                                parent_name=item.get("Super.Name"),
+                                status=item.get("Status.Name"),
+                            )
+                    if project:
+                        project_list.append(project)
 
             if not project_list:
                 console.print("[yellow]No projects found.[/yellow]")
@@ -176,14 +206,14 @@ def projects(include_all: bool, output_file: str | None, output_format: str) -> 
                 return
 
             # Console output
-            title = "Projects (Business Epics)" if include_all else "Projects (Implementation)"
+            title = "All Projects (Implementation)" if show_all else "Bookmarked Projects"
             table = Table(title=title)
             table.add_column("Number", style="cyan", no_wrap=True)
             table.add_column("Name")
-            if include_all:
-                table.add_column("Status", style="magenta")
+            table.add_column("Status", style="magenta")
             table.add_column("Parent", style="dim")
-            table.add_column("★", style="green", no_wrap=True)
+            if show_all:
+                table.add_column("★", style="green", no_wrap=True)
 
             bookmarked_oids = set(storage.get_bookmarked_project_oids())
             default_oid = storage.get_default_project_oid()
@@ -197,10 +227,11 @@ def projects(include_all: bool, output_file: str | None, output_format: str) -> 
                 row = [
                     project.number,
                     project.name[:50] + ("..." if len(project.name) > 50 else ""),
+                    project.status or "-",
+                    project.parent_name or "-",
                 ]
-                if include_all:
-                    row.append(project.status or "-")
-                row.extend([project.parent_name or "-", bookmark_marker])
+                if show_all:
+                    row.append(bookmark_marker)
                 table.add_row(*row)
 
             console.print(table)
@@ -209,16 +240,46 @@ def projects(include_all: bool, output_file: str | None, output_format: str) -> 
     run_async(_projects())
 
 
-@cli.group(name="project")
-def project_group() -> None:
+@cli.group(name="bookmarks")
+def bookmarks_group() -> None:
     """Manage project bookmarks."""
     pass
 
 
-@project_group.command(name="add")
+@bookmarks_group.command(name="list")
+@handle_errors
+def bookmarks_list() -> None:
+    """List all bookmarked projects."""
+    bookmarks = storage.settings.bookmarks
+    if not bookmarks:
+        console.print("[yellow]No bookmarked projects.[/yellow]")
+        console.print("[dim]Use 'v1 bookmarks add <number>' to bookmark a project.[/dim]")
+        return
+
+    default_oid = storage.get_default_project_oid()
+
+    table = Table(title="Bookmarked Projects")
+    table.add_column("Number", style="cyan", no_wrap=True)
+    table.add_column("Name")
+    table.add_column("Default", style="green", no_wrap=True)
+
+    for bookmark in bookmarks:
+        # Extract number from OID (e.g., "Epic:1234" -> "E-1234")
+        number = ""
+        if ":" in bookmark.oid:
+            num = bookmark.oid.split(":")[-1]
+            number = f"E-{num}"
+        is_default = "★" if bookmark.oid == default_oid else ""
+        table.add_row(number, bookmark.name, is_default)
+
+    console.print(table)
+    console.print(f"\n[dim]Total: {len(bookmarks)} bookmarks[/dim]")
+
+
+@bookmarks_group.command(name="add")
 @click.argument("identifier")
 @handle_errors
-def project_add(identifier: str) -> None:
+def bookmark_add(identifier: str) -> None:
     """Bookmark a project by name or number (E-xxx)."""
 
     async def _add() -> None:
@@ -244,31 +305,71 @@ def project_add(identifier: str) -> None:
     run_async(_add())
 
 
-@project_group.command(name="remove")
-@click.argument("name")
+@bookmarks_group.command(name="delete")
+@click.argument("identifier")
 @handle_errors
-def project_remove(name: str) -> None:
-    """Remove a project bookmark."""
-    if storage.remove_project_bookmark(name):
-        console.print(f"[green]Removed bookmark:[/green] {name}")
+def bookmark_delete(identifier: str) -> None:
+    """Remove a project bookmark by name or number (E-xxx)."""
+    result = storage.remove_project_bookmark(identifier)
+    if result:
+        name, oid = result
+        console.print(f"[green]Removed bookmark:[/green] {name} ({oid})")
     else:
-        console.print(f"[yellow]Bookmark not found:[/yellow] {name}")
+        console.print(f"[yellow]Bookmark not found:[/yellow] {identifier}")
 
 
-@project_group.command(name="default")
-@click.argument("name")
+@cli.group(name="projects")
+def projects_group() -> None:
+    """List and manage projects."""
+    pass
+
+
+@projects_group.command(name="list")
+@click.option("--all", "-a", "show_all", is_flag=True, help="Show all projects (default: bookmarked only)")
+@click.option("--output", "-o", "output_file", type=click.Path(), help="Write output to file")
+@click.option("--format", "-f", "output_format", type=click.Choice(["table", "csv", "json"]), default="table", help="Output format")
 @handle_errors
-def project_default(name: str) -> None:
-    """Set the default project."""
-    settings = get_settings()
-    bookmark = settings.get_bookmark(name)
-    if not bookmark:
-        console.print(f"[red]Bookmark not found:[/red] {name}")
-        console.print("[dim]Use 'v1 project add <name>' to bookmark a project first.[/dim]")
+def projects_list(show_all: bool, output_file: str | None, output_format: str) -> None:
+    """List projects (bookmarked by default, all with -a)."""
+    _list_projects(show_all, output_file, output_format)
+
+
+@projects_group.command(name="default")
+@click.argument("identifier")
+@handle_errors
+def projects_default(identifier: str) -> None:
+    """Set the default project by name or number (E-xxx)."""
+
+    async def _default() -> None:
+        settings = get_settings()
+
+        # First try to find in existing bookmarks
+        bookmark = settings.get_bookmark(identifier)
+        if bookmark:
+            storage.set_default_project(bookmark.oid)
+            console.print(f"[green]Default project set:[/green] {bookmark.name}")
+            return
+
+        # Check if it's a number format - if so, fetch and auto-bookmark
+        is_number = (
+            identifier.upper().startswith("E-") or
+            identifier.replace("-", "").isdigit()
+        )
+
+        if is_number:
+            async with V1Client() as client:
+                project = await client.get_project_by_number(identifier)
+                if project:
+                    storage.add_project_bookmark(project.name, project.oid)
+                    storage.set_default_project(project.oid)
+                    console.print(f"[green]Bookmarked and set as default:[/green] {project.number} - {project.name}")
+                    return
+
+        console.print(f"[red]Project not found:[/red] {identifier}")
+        console.print("[dim]Use 'v1 bookmarks add <number>' to bookmark a project first.[/dim]")
         raise SystemExit(1)
 
-    storage.set_default_project(bookmark.oid)
-    console.print(f"[green]Default project set:[/green] {bookmark.name}")
+    run_async(_default())
 
 
 # =============================================================================
@@ -308,11 +409,11 @@ def stories(project_name: str | None, include_done: bool) -> None:
     """List stories in a project."""
 
     async def _stories() -> None:
-        project_oid = _resolve_project_oid(project_name)
-        if not project_oid:
-            return
-
         async with V1Client() as client:
+            project_oid = await _resolve_project_oid_async(project_name, client)
+            if not project_oid:
+                return
+
             story_list = await client.get_stories(project_oid, include_done=include_done)
 
             if not story_list:
@@ -463,11 +564,11 @@ def roadmap(project_name: str | None, include_done: bool, output_file: str | Non
     """List delivery groups (roadmap) for a project."""
 
     async def _roadmap() -> None:
-        project_oid = _resolve_project_oid(project_name)
-        if not project_oid:
-            return
-
         async with V1Client() as client:
+            project_oid = await _resolve_project_oid_async(project_name, client)
+            if not project_oid:
+                return
+
             deliveries = await client.get_delivery_groups(project_oid, include_done=include_done)
 
             if not deliveries:
@@ -506,11 +607,11 @@ def epics(project_name: str | None, include_done: bool) -> None:
     """List epics in a project."""
 
     async def _epics() -> None:
-        project_oid = _resolve_project_oid(project_name)
-        if not project_oid:
-            return
-
         async with V1Client() as client:
+            project_oid = await _resolve_project_oid_async(project_name, client)
+            if not project_oid:
+                return
+
             epic_list = await client.get_epics(project_oid, include_done=include_done)
 
             if not epic_list:
@@ -551,11 +652,11 @@ def epic_create(name: str, project_name: str | None, description: str) -> None:
     """Create a new epic."""
 
     async def _create() -> None:
-        project_oid = _resolve_project_oid(project_name)
-        if not project_oid:
-            return
-
         async with V1Client() as client:
+            project_oid = await _resolve_project_oid_async(project_name, client)
+            if not project_oid:
+                return
+
             oid = await client.create_epic(name, project_oid, description)
             console.print(f"[green]Created epic:[/green] {oid}")
             console.print(f"  Name: {name}")
@@ -593,12 +694,12 @@ def story_create(
     """Create a new story."""
 
     async def _create() -> None:
-        project_oid = _resolve_project_oid(project_name)
-        if not project_oid:
-            return
-
-        epic_oid = None
         async with V1Client() as client:
+            project_oid = await _resolve_project_oid_async(project_name, client)
+            if not project_oid:
+                return
+
+            epic_oid = None
             if epic_number:
                 epic = await client.get_epic_by_number(epic_number)
                 if not epic:
@@ -726,15 +827,30 @@ def tui() -> None:
 # =============================================================================
 
 
-def _resolve_project_oid(project_name: str | None) -> str | None:
-    """Resolve a project OID from name or default."""
-    if project_name:
+async def _resolve_project_oid_async(project_identifier: str | None, client: V1Client) -> str | None:
+    """Resolve a project OID from name, number, or default."""
+    if project_identifier:
         settings = get_settings()
-        bookmark = settings.get_bookmark(project_name)
+
+        # First check bookmarks by name
+        bookmark = settings.get_bookmark(project_identifier)
         if bookmark:
             return bookmark.oid
-        console.print(f"[red]Project bookmark not found:[/red] {project_name}")
-        console.print("Use 'v1 project add <name>' to bookmark a project.")
+
+        # Check if it looks like a number (E-xxx)
+        is_number = (
+            project_identifier.upper().startswith("E-") or
+            project_identifier.replace("-", "").isdigit()
+        )
+
+        if is_number:
+            # Try to fetch by number
+            project = await client.get_project_by_number(project_identifier)
+            if project:
+                return project.oid
+
+        console.print(f"[red]Project not found:[/red] {project_identifier}")
+        console.print("Use 'v1 bookmarks add <number>' to bookmark a project.")
         return None
 
     default_oid = storage.get_default_project_oid()
@@ -742,7 +858,27 @@ def _resolve_project_oid(project_name: str | None) -> str | None:
         return default_oid
 
     console.print("[red]No project specified and no default set.[/red]")
-    console.print("Use --project/-p or set a default with 'v1 project default <name>'")
+    console.print("Use --project/-p or set a default with 'v1 projects default <number>'")
+    return None
+
+
+def _resolve_project_oid(project_name: str | None) -> str | None:
+    """Resolve a project OID from name or default (sync, bookmarks only)."""
+    if project_name:
+        settings = get_settings()
+        bookmark = settings.get_bookmark(project_name)
+        if bookmark:
+            return bookmark.oid
+        console.print(f"[red]Project bookmark not found:[/red] {project_name}")
+        console.print("Use 'v1 bookmarks add <name>' to bookmark a project.")
+        return None
+
+    default_oid = storage.get_default_project_oid()
+    if default_oid:
+        return default_oid
+
+    console.print("[red]No project specified and no default set.[/red]")
+    console.print("Use --project/-p or set a default with 'v1 projects default <name>'")
     return None
 
 

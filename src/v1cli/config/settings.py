@@ -56,11 +56,32 @@ class Settings(BaseModel):
     # Status mapping (discovered during setup)
     status_mapping: StatusMapping = Field(default_factory=StatusMapping)
 
-    def get_bookmark(self, name: str) -> ProjectBookmark | None:
-        """Find a bookmark by name (case-insensitive)."""
-        name_lower = name.lower()
+    def get_bookmark(self, identifier: str) -> ProjectBookmark | None:
+        """Find a bookmark by name or number (case-insensitive).
+
+        Args:
+            identifier: Project name or number (e.g., "E-1234" or "1234")
+        """
+        identifier_lower = identifier.lower()
+
+        # Check if it looks like a number (E-xxx or just digits)
+        is_number = (
+            identifier_lower.startswith("e-") or
+            identifier.replace("-", "").isdigit()
+        )
+
+        if is_number:
+            # Extract numeric part
+            num = identifier_lower.replace("e-", "").lstrip("0") or "0"
+            for bookmark in self.bookmarks:
+                # OID format is "Epic:1234"
+                oid_num = bookmark.oid.split(":")[-1] if ":" in bookmark.oid else ""
+                if oid_num == num:
+                    return bookmark
+
+        # Match by name
         for bookmark in self.bookmarks:
-            if bookmark.name.lower() == name_lower:
+            if bookmark.name.lower() == identifier_lower:
                 return bookmark
         return None
 
@@ -72,16 +93,22 @@ class Settings(BaseModel):
         else:
             self.bookmarks.append(ProjectBookmark(name=name, oid=oid))
 
-    def remove_bookmark(self, name: str) -> bool:
-        """Remove a project bookmark. Returns True if removed."""
-        name_lower = name.lower()
-        for i, bookmark in enumerate(self.bookmarks):
-            if bookmark.name.lower() == name_lower:
-                self.bookmarks.pop(i)
-                if self.default_project == bookmark.oid:
-                    self.default_project = None
-                return True
-        return False
+    def remove_bookmark(self, identifier: str) -> ProjectBookmark | None:
+        """Remove a project bookmark by name or number.
+
+        Args:
+            identifier: Project name or number (e.g., "E-1234" or "1234")
+
+        Returns:
+            The removed bookmark, or None if not found.
+        """
+        bookmark = self.get_bookmark(identifier)
+        if bookmark:
+            self.bookmarks.remove(bookmark)
+            if self.default_project == bookmark.oid:
+                self.default_project = None
+            return bookmark
+        return None
 
 
 # Global settings instance (lazy loaded)
