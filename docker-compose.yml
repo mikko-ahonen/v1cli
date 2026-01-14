@@ -21,6 +21,7 @@ services:
       - CLAUDE_CONFIG_DIR=/workspaces/claude
       - V1_URL=${V1_URL:-}
       - V1_TOKEN=${V1_TOKEN:-}
+      - V1_VERIFY_SSL=${V1_VERIFY_SSL:-true}
     working_dir: /src/v1cli
 
   dev:
@@ -43,6 +44,7 @@ services:
     environment:
       - V1_URL=${V1_URL:-}
       - V1_TOKEN=${V1_TOKEN:-}
+      - V1_VERIFY_SSL=${V1_VERIFY_SSL:-true}
 
     working_dir: /src/v1cli
 

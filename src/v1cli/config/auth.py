@@ -49,6 +49,19 @@ def get_auth_token() -> str:
     return token
 
 
+def get_verify_ssl() -> bool:
+    """Get SSL verification setting from environment.
+
+    Set V1_VERIFY_SSL=false to disable SSL certificate verification.
+    This is useful for corporate environments with custom CAs or self-signed certs.
+
+    Returns:
+        True if SSL should be verified (default), False otherwise
+    """
+    value = os.environ.get("V1_VERIFY_SSL", "true").lower()
+    return value not in ("false", "0", "no", "off")
+
+
 def get_auth_token_1password(item_name: str = "VersionOne") -> str:
     """Get the VersionOne API token from 1Password CLI.
 

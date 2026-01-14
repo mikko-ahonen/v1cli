@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 
 from v1cli.api.models import Epic, Member, Project, StatusInfo, Story, Task
-from v1cli.config.auth import get_auth_token, get_v1_url
+from v1cli.config.auth import get_auth_token, get_v1_url, get_verify_ssl
 
 
 class V1APIError(Exception):
@@ -24,6 +24,7 @@ class V1Client:
         base_url: str | None = None,
         token: str | None = None,
         timeout: float = 30.0,
+        verify_ssl: bool | None = None,
     ):
         """Initialize the client.
 
@@ -31,10 +32,12 @@ class V1Client:
             base_url: V1 instance URL (defaults to V1_URL env var)
             token: API token (defaults to V1_TOKEN env var)
             timeout: Request timeout in seconds
+            verify_ssl: Whether to verify SSL certs (defaults to V1_VERIFY_SSL env var)
         """
         self.base_url = base_url or get_v1_url()
         self.token = token or get_auth_token()
         self.timeout = timeout
+        self.verify_ssl = verify_ssl if verify_ssl is not None else get_verify_ssl()
         self._client: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> "V1Client":
@@ -47,6 +50,7 @@ class V1Client:
                 "Accept": "application/json",
             },
             timeout=self.timeout,
+            verify=self.verify_ssl,
         )
         return self
 
