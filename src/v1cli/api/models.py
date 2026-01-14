@@ -13,15 +13,16 @@ class Member(BaseModel):
 
 
 class Project(BaseModel):
-    """A VersionOne project (Delivery Group Business Epic)."""
+    """A VersionOne Business Epic (Project, Group, Program, or Delivery Group)."""
 
     oid: str = Field(description="Unique identifier, e.g., 'Epic:1234'")
-    name: str = Field(description="Project name")
-    description: str | None = Field(default=None, description="Project description")
+    name: str = Field(description="Name")
+    description: str | None = Field(default=None, description="Description")
     number: str = Field(default="", description="Display number, e.g., 'E-100'")
     category: str | None = Field(default=None, description="Category name")
     scope_name: str = Field(default="", description="Scope name")
-    parent_name: str | None = Field(default=None, description="Parent group/program name")
+    parent_name: str | None = Field(default=None, description="Parent name")
+    status: str | None = Field(default=None, description="Status name")
 
 
 class ProjectBookmark(BaseModel):

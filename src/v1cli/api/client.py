@@ -405,14 +405,14 @@ class V1Client:
         ]
 
     async def get_projects(self, categories: list[str] | None = None) -> list[Project]:
-        """Get Business Epics filtered by category.
+        """Get projects (Business Epic category only).
 
         Args:
-            categories: List of category names to include. If None, includes:
-                       Delivery Group, Program, Group, Business Epic
+            categories: List of category names to include. If None, includes
+                       only 'Business Epic' (actual projects users work in).
         """
         if categories is None:
-            categories = ["Delivery Group", "Program", "Group", "Business Epic"]
+            categories = ["Business Epic"]
 
         # Build category filter: Category.Name='X'|Category.Name='Y'
         cat_filters = "|".join(f"Category.Name='{cat}'" for cat in categories)
@@ -434,6 +434,45 @@ class V1Client:
                 category=item.get("Category.Name"),
                 scope_name=item.get("Scope.Name", ""),
                 parent_name=item.get("Super.Name"),
+            )
+            for item in results
+        ]
+
+    async def get_delivery_groups(
+        self,
+        project_oid: str,
+        include_done: bool = False,
+    ) -> list[Project]:
+        """Get Delivery Groups under a project (roadmap/release items).
+
+        Args:
+            project_oid: The parent project (Business Epic) OID
+            include_done: Include closed delivery groups
+
+        Returns:
+            List of Delivery Groups
+        """
+        filters = [f"Super='{project_oid}'", "Category.Name='Delivery Group'"]
+        if not include_done:
+            filters.append("AssetState!='Closed'")
+
+        results = await self._query(
+            "Epic",
+            select=["Name", "Description", "Number", "Category.Name", "Scope.Name", "Super.Name", "Status.Name"],
+            filter_=filters,
+            sort=["Name"],
+        )
+
+        return [
+            Project(
+                oid=item["_oid"],
+                name=item.get("Name", ""),
+                description=item.get("Description", ""),
+                number=item.get("Number", ""),
+                category=item.get("Category.Name"),
+                scope_name=item.get("Scope.Name", ""),
+                parent_name=item.get("Super.Name"),
+                status=item.get("Status.Name"),
             )
             for item in results
         ]

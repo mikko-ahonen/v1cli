@@ -1,6 +1,8 @@
 """CLI commands for v1cli."""
 
 import asyncio
+import csv
+import json
 from typing import Any
 
 import click
@@ -152,29 +154,37 @@ def setup() -> None:
 
 
 @cli.command()
+@click.option("--output", "-o", "output_file", type=click.Path(), help="Write output to file")
+@click.option("--format", "-f", "output_format", type=click.Choice(["table", "csv", "json"]), default="table", help="Output format")
 @handle_errors
-def projects() -> None:
+def projects(output_file: str | None, output_format: str) -> None:
     """List all accessible projects (Business Epics)."""
 
     async def _projects() -> None:
         async with V1Client() as client:
-            projects = await client.get_projects()
+            project_list = await client.get_projects()
 
-            if not projects:
+            if not project_list:
                 console.print("[yellow]No projects found.[/yellow]")
                 return
 
-            table = Table(title="Projects")
+            # Handle file output
+            if output_file:
+                _write_projects_to_file(project_list, output_file, output_format)
+                console.print(f"[green]Wrote {len(project_list)} projects to {output_file}[/green]")
+                return
+
+            # Console output
+            table = Table(title="Projects (Business Epics)")
             table.add_column("Number", style="cyan", no_wrap=True)
             table.add_column("Name")
-            table.add_column("Category", style="magenta")
             table.add_column("Parent", style="dim")
             table.add_column("★", style="green", no_wrap=True)
 
             bookmarked_oids = set(storage.get_bookmarked_project_oids())
             default_oid = storage.get_default_project_oid()
 
-            for project in projects:
+            for project in project_list:
                 bookmark_marker = ""
                 if project.oid in bookmarked_oids:
                     bookmark_marker = "★"
@@ -182,14 +192,13 @@ def projects() -> None:
                         bookmark_marker = "★ def"
                 table.add_row(
                     project.number,
-                    project.name[:45] + ("..." if len(project.name) > 45 else ""),
-                    project.category or "-",
+                    project.name[:50] + ("..." if len(project.name) > 50 else ""),
                     project.parent_name or "-",
                     bookmark_marker,
                 )
 
             console.print(table)
-            console.print(f"\n[dim]Total: {len(projects)} projects[/dim]")
+            console.print(f"\n[dim]Total: {len(project_list)} projects[/dim]")
 
     run_async(_projects())
 
@@ -426,6 +435,51 @@ def take(number: str) -> None:
 # =============================================================================
 # Epic Commands
 # =============================================================================
+
+
+@cli.command()
+@click.option("--project", "-p", "project_name", help="Project name")
+@click.option("--all", "-a", "include_done", is_flag=True, help="Include closed delivery groups")
+@click.option("--output", "-o", "output_file", type=click.Path(), help="Write output to file")
+@click.option("--format", "-f", "output_format", type=click.Choice(["table", "csv", "json"]), default="table", help="Output format")
+@handle_errors
+def roadmap(project_name: str | None, include_done: bool, output_file: str | None, output_format: str) -> None:
+    """List delivery groups (roadmap) for a project."""
+
+    async def _roadmap() -> None:
+        project_oid = _resolve_project_oid(project_name)
+        if not project_oid:
+            return
+
+        async with V1Client() as client:
+            deliveries = await client.get_delivery_groups(project_oid, include_done=include_done)
+
+            if not deliveries:
+                console.print("[yellow]No delivery groups found.[/yellow]")
+                return
+
+            # Handle file output
+            if output_file:
+                _write_projects_to_file(deliveries, output_file, output_format)
+                console.print(f"[green]Wrote {len(deliveries)} delivery groups to {output_file}[/green]")
+                return
+
+            table = Table(title="Roadmap (Delivery Groups)")
+            table.add_column("Number", style="cyan")
+            table.add_column("Name")
+            table.add_column("Status")
+
+            for d in deliveries:
+                table.add_row(
+                    d.number,
+                    d.name[:60] + ("..." if len(d.name) > 60 else ""),
+                    d.status or "-",
+                )
+
+            console.print(table)
+            console.print(f"\n[dim]Total: {len(deliveries)} delivery groups[/dim]")
+
+    run_async(_roadmap())
 
 
 @cli.command()
@@ -708,6 +762,46 @@ def _print_stories_table(stories: list[Any], title: str = "Stories") -> None:
 
     console.print(table)
     console.print(f"\n[dim]Total: {len(stories)} stories[/dim]")
+
+
+def _write_projects_to_file(projects: list[Any], filepath: str, fmt: str) -> None:
+    """Write projects to a file in the specified format."""
+    if fmt == "json":
+        data = [
+            {
+                "oid": p.oid,
+                "number": p.number,
+                "name": p.name,
+                "category": p.category,
+                "parent": p.parent_name,
+                "scope": p.scope_name,
+                "description": p.description,
+            }
+            for p in projects
+        ]
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+    elif fmt == "csv":
+        with open(filepath, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["OID", "Number", "Name", "Category", "Parent", "Scope"])
+            for p in projects:
+                writer.writerow([
+                    p.oid,
+                    p.number,
+                    p.name,
+                    p.category or "",
+                    p.parent_name or "",
+                    p.scope_name or "",
+                ])
+
+    else:  # table format as plain text
+        lines = ["Number\tName\tCategory\tParent"]
+        for p in projects:
+            lines.append(f"{p.number}\t{p.name}\t{p.category or '-'}\t{p.parent_name or '-'}")
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
 
 
 if __name__ == "__main__":
