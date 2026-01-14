@@ -402,25 +402,26 @@ def mine(include_done: bool) -> None:
 
 
 @cli.command()
-@click.option("--project", "-p", "project_name", help="Project name (uses default if not specified)")
+@click.argument("epic_number")
 @click.option("--all", "-a", "include_done", is_flag=True, help="Include completed stories")
 @handle_errors
-def stories(project_name: str | None, include_done: bool) -> None:
-    """List stories in a project."""
+def stories(epic_number: str, include_done: bool) -> None:
+    """List stories under an epic (S-xxx)."""
 
     async def _stories() -> None:
         async with V1Client() as client:
-            project_oid = await _resolve_project_oid_async(project_name, client)
-            if not project_oid:
-                return
+            epic = await client.get_epic_by_number(epic_number)
+            if not epic:
+                console.print(f"[red]Epic not found:[/red] {epic_number}")
+                raise SystemExit(1)
 
-            story_list = await client.get_stories(project_oid, include_done=include_done)
+            story_list = await client.get_stories(epic.oid, include_done=include_done)
 
             if not story_list:
-                console.print("[yellow]No stories found.[/yellow]")
+                console.print(f"[yellow]No stories under {epic.number}[/yellow]")
                 return
 
-            _print_stories_table(story_list, title="Stories")
+            _print_stories_table(story_list, title=f"Stories under {epic.number}: {epic.name}")
 
     run_async(_stories())
 
@@ -555,7 +556,7 @@ def take(number: str) -> None:
 
 
 @cli.command()
-@click.option("--project", "-p", "project_name", help="Project name")
+@click.option("--project", "-p", "project_name", help="Project name or number")
 @click.option("--all", "-a", "include_done", is_flag=True, help="Include closed delivery groups")
 @click.option("--output", "-o", "output_file", type=click.Path(), help="Write output to file")
 @click.option("--format", "-f", "output_format", type=click.Choice(["table", "csv", "json"]), default="table", help="Output format")
@@ -600,7 +601,7 @@ def roadmap(project_name: str | None, include_done: bool, output_file: str | Non
 
 
 @cli.command()
-@click.option("--project", "-p", "project_name", help="Project name")
+@click.option("--project", "-p", "project_name", help="Project name or number")
 @click.option("--all", "-a", "include_done", is_flag=True, help="Include closed epics")
 @handle_errors
 def epics(project_name: str | None, include_done: bool) -> None:
@@ -645,7 +646,7 @@ def epic_group() -> None:
 
 @epic_group.command(name="create")
 @click.argument("name")
-@click.option("--project", "-p", "project_name", help="Project name")
+@click.option("--project", "-p", "project_name", help="Project name or number")
 @click.option("--description", "-d", "description", default="", help="Epic description")
 @handle_errors
 def epic_create(name: str, project_name: str | None, description: str) -> None:
@@ -679,7 +680,7 @@ def story_group(ctx: click.Context) -> None:
 
 @story_group.command(name="create")
 @click.argument("name")
-@click.option("--project", "-p", "project_name", help="Project name")
+@click.option("--project", "-p", "project_name", help="Project name or number")
 @click.option("--epic", "-e", "epic_number", help="Parent epic number (e.g., E-100)")
 @click.option("--estimate", "-s", type=float, help="Story points estimate")
 @click.option("--description", "-d", "description", default="", help="Story description")
@@ -862,15 +863,15 @@ async def _resolve_project_oid_async(project_identifier: str | None, client: V1C
     return None
 
 
-def _resolve_project_oid(project_name: str | None) -> str | None:
-    """Resolve a project OID from name or default (sync, bookmarks only)."""
-    if project_name:
+def _resolve_project_oid(project_identifier: str | None) -> str | None:
+    """Resolve a project OID from name, number, or default (sync, bookmarks only)."""
+    if project_identifier:
         settings = get_settings()
-        bookmark = settings.get_bookmark(project_name)
+        bookmark = settings.get_bookmark(project_identifier)
         if bookmark:
             return bookmark.oid
-        console.print(f"[red]Project bookmark not found:[/red] {project_name}")
-        console.print("Use 'v1 bookmarks add <name>' to bookmark a project.")
+        console.print(f"[red]Project bookmark not found:[/red] {project_identifier}")
+        console.print("Use 'v1 bookmarks add <number>' to bookmark a project.")
         return None
 
     default_oid = storage.get_default_project_oid()
@@ -878,7 +879,7 @@ def _resolve_project_oid(project_name: str | None) -> str | None:
         return default_oid
 
     console.print("[red]No project specified and no default set.[/red]")
-    console.print("Use --project/-p or set a default with 'v1 projects default <name>'")
+    console.print("Use --project/-p or set a default with 'v1 projects default <number>'")
     return None
 
 

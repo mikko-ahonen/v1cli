@@ -204,19 +204,20 @@ class V1Client:
 
     async def get_stories(
         self,
-        project_oid: str,
+        epic_oid: str,
         include_done: bool = False,
     ) -> list[Story]:
-        """Get all stories in a project.
+        """Get stories under an epic (Story asset).
 
         Args:
-            project_oid: The project OID
+            epic_oid: The parent Epic OID (Story:xxx)
             include_done: Include completed stories
 
         Returns:
-            List of stories
+            List of child stories
         """
-        filters = [f"Scope='{project_oid}'"]
+        # Stories whose parent is this epic
+        filters = [f"Super='{epic_oid}'"]
         if not include_done:
             filters.append("AssetState!='Closed'")
 
