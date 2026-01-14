@@ -76,8 +76,8 @@ def me() -> None:
             storage.cache_member(member.oid, member.name)
 
             console.print(f"[green]Logged in as:[/green] {member.name}")
-            console.print(f"[dim]Email:[/dim] {member.email}")
-            console.print(f"[dim]Username:[/dim] {member.username}")
+            console.print(f"[dim]Email:[/dim] {member.email or 'N/A'}")
+            console.print(f"[dim]Username:[/dim] {member.username or 'N/A'}")
             console.print(f"[dim]OID:[/dim] {member.oid}")
             console.print(f"\n[dim]Member info cached to ~/.v1cli/config.toml[/dim]")
 

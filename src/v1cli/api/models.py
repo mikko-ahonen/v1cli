@@ -7,9 +7,9 @@ class Member(BaseModel):
     """A VersionOne member (user)."""
 
     oid: str = Field(description="Unique identifier, e.g., 'Member:20'")
-    name: str = Field(description="Display name")
-    email: str = Field(default="", description="Email address")
-    username: str = Field(default="", description="Login username")
+    name: str = Field(default="", description="Display name")
+    email: str | None = Field(default=None, description="Email address")
+    username: str | None = Field(default=None, description="Login username")
 
 
 class Project(BaseModel):
