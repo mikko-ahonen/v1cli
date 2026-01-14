@@ -154,15 +154,16 @@ def setup() -> None:
 
 
 @cli.command()
+@click.option("--all", "-a", "include_all", is_flag=True, help="Include all statuses (default: Implementation only)")
 @click.option("--output", "-o", "output_file", type=click.Path(), help="Write output to file")
 @click.option("--format", "-f", "output_format", type=click.Choice(["table", "csv", "json"]), default="table", help="Output format")
 @handle_errors
-def projects(output_file: str | None, output_format: str) -> None:
-    """List all accessible projects (Business Epics)."""
+def projects(include_all: bool, output_file: str | None, output_format: str) -> None:
+    """List projects (Business Epics with status Implementation)."""
 
     async def _projects() -> None:
         async with V1Client() as client:
-            project_list = await client.get_projects()
+            project_list = await client.get_projects(include_all_statuses=include_all)
 
             if not project_list:
                 console.print("[yellow]No projects found.[/yellow]")
@@ -175,9 +176,12 @@ def projects(output_file: str | None, output_format: str) -> None:
                 return
 
             # Console output
-            table = Table(title="Projects (Business Epics)")
+            title = "Projects (Business Epics)" if include_all else "Projects (Implementation)"
+            table = Table(title=title)
             table.add_column("Number", style="cyan", no_wrap=True)
             table.add_column("Name")
+            if include_all:
+                table.add_column("Status", style="magenta")
             table.add_column("Parent", style="dim")
             table.add_column("★", style="green", no_wrap=True)
 
@@ -190,12 +194,14 @@ def projects(output_file: str | None, output_format: str) -> None:
                     bookmark_marker = "★"
                     if project.oid == default_oid:
                         bookmark_marker = "★ def"
-                table.add_row(
+                row = [
                     project.number,
                     project.name[:50] + ("..." if len(project.name) > 50 else ""),
-                    project.parent_name or "-",
-                    bookmark_marker,
-                )
+                ]
+                if include_all:
+                    row.append(project.status or "-")
+                row.extend([project.parent_name or "-", bookmark_marker])
+                table.add_row(*row)
 
             console.print(table)
             console.print(f"\n[dim]Total: {len(project_list)} projects[/dim]")

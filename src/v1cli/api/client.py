@@ -404,12 +404,19 @@ class V1Client:
             for item in results
         ]
 
-    async def get_projects(self, categories: list[str] | None = None) -> list[Project]:
+    async def get_projects(
+        self,
+        categories: list[str] | None = None,
+        status: str | None = "Implementation",
+        include_all_statuses: bool = False,
+    ) -> list[Project]:
         """Get projects (Business Epic category only).
 
         Args:
             categories: List of category names to include. If None, includes
                        only 'Business Epic' (actual projects users work in).
+            status: Filter by status name. Default is 'Implementation'.
+            include_all_statuses: If True, ignore status filter and show all.
         """
         if categories is None:
             categories = ["Business Epic"]
@@ -418,11 +425,15 @@ class V1Client:
         cat_filters = "|".join(f"Category.Name='{cat}'" for cat in categories)
         filters = ["AssetState!='Closed'", f"({cat_filters})"]
 
+        # Add status filter unless showing all
+        if not include_all_statuses and status:
+            filters.append(f"Status.Name='{status}'")
+
         results = await self._query(
             "Epic",
-            select=["Name", "Description", "Number", "Category.Name", "Scope.Name", "Super.Name"],
+            select=["Name", "Description", "Number", "Category.Name", "Scope.Name", "Super.Name", "Status.Name"],
             filter_=filters,
-            sort=["Category.Name", "Name"],
+            sort=["Name"],
         )
 
         return [
@@ -434,6 +445,7 @@ class V1Client:
                 category=item.get("Category.Name"),
                 scope_name=item.get("Scope.Name", ""),
                 parent_name=item.get("Super.Name"),
+                status=item.get("Status.Name"),
             )
             for item in results
         ]
