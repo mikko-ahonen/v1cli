@@ -13,11 +13,14 @@ class Member(BaseModel):
 
 
 class Project(BaseModel):
-    """A VersionOne project (Scope)."""
+    """A VersionOne project (Business Epic)."""
 
-    oid: str = Field(description="Unique identifier, e.g., 'Scope:1234'")
+    oid: str = Field(description="Unique identifier, e.g., 'Epic:1234'")
     name: str = Field(description="Project name")
-    description: str = Field(default="", description="Project description")
+    description: str | None = Field(default=None, description="Project description")
+    number: str = Field(default="", description="Display number, e.g., 'E-100'")
+    category: str | None = Field(default=None, description="Category name")
+    scope_name: str = Field(default="", description="Parent scope name")
 
 
 class ProjectBookmark(BaseModel):
@@ -51,14 +54,15 @@ class Story(BaseModel):
 
 
 class Epic(BaseModel):
-    """A VersionOne epic (high-level workitem)."""
+    """A VersionOne epic (Story under Business Epic)."""
 
-    oid: str = Field(description="Unique identifier, e.g., 'Epic:100'")
-    number: str = Field(description="Display number, e.g., 'E-100'")
+    oid: str = Field(description="Unique identifier, e.g., 'Story:100'")
+    number: str = Field(description="Display number, e.g., 'S-100'")
     name: str = Field(description="Epic title")
-    description: str = Field(default="", description="Epic description")
-    scope_name: str = Field(default="", description="Project name")
-    scope_oid: str = Field(default="", description="Project OID")
+    description: str | None = Field(default=None, description="Epic description")
+    scope_name: str = Field(default="", description="Scope name")
+    scope_oid: str = Field(default="", description="Scope OID")
+    parent_name: str | None = Field(default=None, description="Business Epic name")
     status: str | None = Field(default=None, description="Status name")
     status_oid: str | None = Field(default=None, description="Status OID")
 

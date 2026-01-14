@@ -154,7 +154,7 @@ def setup() -> None:
 @cli.command()
 @handle_errors
 def projects() -> None:
-    """List all accessible projects."""
+    """List all accessible projects (Business Epics)."""
 
     async def _projects() -> None:
         async with V1Client() as client:
@@ -164,10 +164,12 @@ def projects() -> None:
                 console.print("[yellow]No projects found.[/yellow]")
                 return
 
-            table = Table(title="Projects")
-            table.add_column("Name", style="cyan")
-            table.add_column("OID", style="dim")
-            table.add_column("Bookmarked", style="green")
+            table = Table(title="Projects (Business Epics)")
+            table.add_column("Number", style="cyan", no_wrap=True)
+            table.add_column("Name")
+            table.add_column("Category", style="dim")
+            table.add_column("Scope", style="dim")
+            table.add_column("★", style="green", no_wrap=True)
 
             bookmarked_oids = set(storage.get_bookmarked_project_oids())
             default_oid = storage.get_default_project_oid()
@@ -177,8 +179,14 @@ def projects() -> None:
                 if project.oid in bookmarked_oids:
                     bookmark_marker = "★"
                     if project.oid == default_oid:
-                        bookmark_marker = "★ (default)"
-                table.add_row(project.name, project.oid, bookmark_marker)
+                        bookmark_marker = "★ def"
+                table.add_row(
+                    project.number,
+                    project.name[:40] + ("..." if len(project.name) > 40 else ""),
+                    project.category or "-",
+                    project.scope_name or "-",
+                    bookmark_marker,
+                )
 
             console.print(table)
             console.print(f"\n[dim]Total: {len(projects)} projects[/dim]")

@@ -386,8 +386,8 @@ class V1Client:
         """
         return await self._update(story_oid, {"Owners": member_oid})
 
-    async def get_projects(self) -> list[Project]:
-        """Get all accessible projects."""
+    async def get_scopes(self) -> list[Project]:
+        """Get all accessible scopes (high-level containers)."""
         results = await self._query(
             "Scope",
             select=["Name", "Description"],
@@ -404,8 +404,33 @@ class V1Client:
             for item in results
         ]
 
+    async def get_projects(self) -> list[Project]:
+        """Get all Business Epics (actual projects).
+
+        Business Epics are top-level Epics that represent projects/workstreams.
+        """
+        # Query for Epics - Business Epics are typically top-level or have specific category
+        results = await self._query(
+            "Epic",
+            select=["Name", "Description", "Number", "Category.Name", "Scope.Name"],
+            filter_=["AssetState!='Closed'", "Super=''"],  # Top-level epics (no parent)
+            sort=["Name"],
+        )
+
+        return [
+            Project(
+                oid=item["_oid"],
+                name=item.get("Name", ""),
+                description=item.get("Description", ""),
+                number=item.get("Number", ""),
+                category=item.get("Category.Name"),
+                scope_name=item.get("Scope.Name", ""),
+            )
+            for item in results
+        ]
+
     async def get_project_by_name(self, name: str) -> Project | None:
-        """Find a project by name (case-insensitive partial match)."""
+        """Find a project (Business Epic) by name (case-insensitive partial match)."""
         projects = await self.get_projects()
         name_lower = name.lower()
         for project in projects:
@@ -413,27 +438,55 @@ class V1Client:
                 return project
         return None
 
+    async def get_project_by_number(self, number: str) -> Project | None:
+        """Find a project (Business Epic) by number (e.g., E-100)."""
+        if not number.upper().startswith("E-"):
+            number = f"E-{number}"
+
+        results = await self._query(
+            "Epic",
+            select=["Name", "Description", "Number", "Category.Name", "Scope.Name"],
+            where={"Number": number},
+        )
+
+        if not results:
+            return None
+
+        item = results[0]
+        return Project(
+            oid=item["_oid"],
+            name=item.get("Name", ""),
+            description=item.get("Description", ""),
+            number=item.get("Number", ""),
+            category=item.get("Category.Name"),
+            scope_name=item.get("Scope.Name", ""),
+        )
+
     async def get_epics(
         self,
         project_oid: str,
         include_done: bool = False,
     ) -> list[Epic]:
-        """Get epics in a project.
+        """Get epics (Stories) under a Business Epic (project).
+
+        In this V1 configuration, "Epics" are actually Story objects
+        that are direct children of Business Epics.
 
         Args:
-            project_oid: The project OID
+            project_oid: The Business Epic OID (parent)
             include_done: Include closed epics
 
         Returns:
-            List of epics
+            List of child epics (Stories under Business Epic)
         """
-        filters = [f"Scope='{project_oid}'"]
+        # Query Stories whose parent (Super) is the Business Epic
+        filters = [f"Super='{project_oid}'"]
         if not include_done:
             filters.append("AssetState!='Closed'")
 
         results = await self._query(
-            "Epic",
-            select=["Number", "Name", "Description", "Status.Name", "Status", "Scope.Name", "Scope"],
+            "Story",
+            select=["Number", "Name", "Description", "Status.Name", "Status", "Scope.Name", "Scope", "Super.Name"],
             filter_=filters,
             sort=["-ChangeDateUTC"],
         )
@@ -455,9 +508,10 @@ class V1Client:
                     oid=item["_oid"],
                     number=item.get("Number", ""),
                     name=item.get("Name", ""),
-                    description=item.get("Description", ""),
+                    description=item.get("Description"),
                     scope_name=item.get("Scope.Name", ""),
                     scope_oid=scope_oid,
+                    parent_name=item.get("Super.Name"),
                     status=item.get("Status.Name"),
                     status_oid=status_oid,
                 )
@@ -465,21 +519,32 @@ class V1Client:
 
         return epics
 
-    async def create_epic(self, name: str, project_oid: str, description: str = "") -> str:
-        """Create a new epic.
+    async def create_epic(
+        self,
+        name: str,
+        project_oid: str,
+        scope_oid: str | None = None,
+        description: str = "",
+    ) -> str:
+        """Create a new epic (Story) under a Business Epic (project).
+
+        In this V1 configuration, "Epics" are Story objects under Business Epics.
 
         Args:
             name: Epic name
-            project_oid: Project OID
+            project_oid: Business Epic OID (parent)
+            scope_oid: Scope OID (if needed, otherwise inherited)
             description: Optional description
 
         Returns:
             The created epic's OID
         """
-        data: dict[str, Any] = {"Name": name, "Scope": project_oid}
+        data: dict[str, Any] = {"Name": name, "Super": project_oid}
+        if scope_oid:
+            data["Scope"] = scope_oid
         if description:
             data["Description"] = description
-        return await self._create("Epic", data)
+        return await self._create("Story", data)
 
     async def create_story(
         self,
@@ -607,13 +672,16 @@ class V1Client:
         ]
 
     async def get_epic_by_number(self, number: str) -> Epic | None:
-        """Get an epic by its display number (e.g., E-100)."""
-        if not number.upper().startswith("E-"):
-            number = f"E-{number}"
+        """Get an epic (Story) by its display number (e.g., S-100).
+
+        In this V1 configuration, "Epics" are Story objects under Business Epics.
+        """
+        if not number.upper().startswith("S-"):
+            number = f"S-{number}"
 
         results = await self._query(
-            "Epic",
-            select=["Number", "Name", "Description", "Status.Name", "Status", "Scope.Name", "Scope"],
+            "Story",
+            select=["Number", "Name", "Description", "Status.Name", "Status", "Scope.Name", "Scope", "Super.Name"],
             where={"Number": number},
         )
 
@@ -635,9 +703,10 @@ class V1Client:
             oid=item["_oid"],
             number=item.get("Number", ""),
             name=item.get("Name", ""),
-            description=item.get("Description", ""),
+            description=item.get("Description"),
             scope_name=item.get("Scope.Name", ""),
             scope_oid=scope_oid,
+            parent_name=item.get("Super.Name"),
             status=item.get("Status.Name"),
             status_oid=status_oid,
         )
