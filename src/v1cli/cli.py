@@ -164,11 +164,11 @@ def projects() -> None:
                 console.print("[yellow]No projects found.[/yellow]")
                 return
 
-            table = Table(title="Projects (Business Epics)")
+            table = Table(title="Projects")
             table.add_column("Number", style="cyan", no_wrap=True)
             table.add_column("Name")
-            table.add_column("Category", style="dim")
-            table.add_column("Scope", style="dim")
+            table.add_column("Category", style="magenta")
+            table.add_column("Parent", style="dim")
             table.add_column("★", style="green", no_wrap=True)
 
             bookmarked_oids = set(storage.get_bookmarked_project_oids())
@@ -182,9 +182,9 @@ def projects() -> None:
                         bookmark_marker = "★ def"
                 table.add_row(
                     project.number,
-                    project.name[:40] + ("..." if len(project.name) > 40 else ""),
+                    project.name[:45] + ("..." if len(project.name) > 45 else ""),
                     project.category or "-",
-                    project.scope_name or "-",
+                    project.parent_name or "-",
                     bookmark_marker,
                 )
 

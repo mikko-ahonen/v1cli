@@ -404,17 +404,25 @@ class V1Client:
             for item in results
         ]
 
-    async def get_projects(self) -> list[Project]:
-        """Get all Business Epics (actual projects).
+    async def get_projects(self, categories: list[str] | None = None) -> list[Project]:
+        """Get Business Epics filtered by category.
 
-        Business Epics are top-level Epics that represent projects/workstreams.
+        Args:
+            categories: List of category names to include. If None, includes:
+                       Delivery Group, Program, Group, Business Epic
         """
-        # Query for Epics - Business Epics are typically top-level or have specific category
+        if categories is None:
+            categories = ["Delivery Group", "Program", "Group", "Business Epic"]
+
+        # Build category filter: Category.Name='X'|Category.Name='Y'
+        cat_filters = "|".join(f"Category.Name='{cat}'" for cat in categories)
+        filters = ["AssetState!='Closed'", f"({cat_filters})"]
+
         results = await self._query(
             "Epic",
-            select=["Name", "Description", "Number", "Category.Name", "Scope.Name"],
-            filter_=["AssetState!='Closed'", "Super=''"],  # Top-level epics (no parent)
-            sort=["Name"],
+            select=["Name", "Description", "Number", "Category.Name", "Scope.Name", "Super.Name"],
+            filter_=filters,
+            sort=["Category.Name", "Name"],
         )
 
         return [
@@ -425,6 +433,7 @@ class V1Client:
                 number=item.get("Number", ""),
                 category=item.get("Category.Name"),
                 scope_name=item.get("Scope.Name", ""),
+                parent_name=item.get("Super.Name"),
             )
             for item in results
         ]
