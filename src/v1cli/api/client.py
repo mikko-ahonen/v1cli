@@ -505,7 +505,7 @@ class V1Client:
 
         results = await self._query(
             "Epic",
-            select=["Name", "Description", "Number", "Category.Name", "Scope.Name"],
+            select=["Name", "Description", "Number", "Category.Name", "Scope.Name", "Super.Name", "Status.Name"],
             where={"Number": number},
         )
 
@@ -520,6 +520,8 @@ class V1Client:
             number=item.get("Number", ""),
             category=item.get("Category.Name"),
             scope_name=item.get("Scope.Name", ""),
+            parent_name=item.get("Super.Name"),
+            status=item.get("Status.Name"),
         )
 
     async def get_epics(

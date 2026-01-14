@@ -216,20 +216,30 @@ def project_group() -> None:
 
 
 @project_group.command(name="add")
-@click.argument("name")
+@click.argument("identifier")
 @handle_errors
-def project_add(name: str) -> None:
-    """Bookmark a project by name."""
+def project_add(identifier: str) -> None:
+    """Bookmark a project by name or number (E-xxx)."""
 
     async def _add() -> None:
         async with V1Client() as client:
-            project = await client.get_project_by_name(name)
+            # Check if identifier looks like a number (E-xxx or just digits)
+            is_number = (
+                identifier.upper().startswith("E-") or
+                identifier.replace("-", "").isdigit()
+            )
+
+            if is_number:
+                project = await client.get_project_by_number(identifier)
+            else:
+                project = await client.get_project_by_name(identifier)
+
             if not project:
-                console.print(f"[red]Project not found:[/red] {name}")
+                console.print(f"[red]Project not found:[/red] {identifier}")
                 raise SystemExit(1)
 
             storage.add_project_bookmark(project.name, project.oid)
-            console.print(f"[green]Bookmarked:[/green] {project.name} ({project.oid})")
+            console.print(f"[green]Bookmarked:[/green] {project.number} - {project.name}")
 
     run_async(_add())
 
