@@ -12,8 +12,10 @@ from rich.tree import Tree
 
 from v1cli.api.client import V1APIError, V1Client
 from v1cli.config.auth import AuthError
-from v1cli.config.settings import get_settings, save_settings
+from v1cli.config.defaults import get_default_project_query_config
+from v1cli.config.settings import ProjectQueryConfig, get_settings, save_settings
 from v1cli.config.workflow import STATUS_COLORS, STATUS_ICONS, StoryStatus
+from v1cli.display import build_table_from_config
 from v1cli.storage.local import LocalStorage
 
 console = Console()
@@ -437,6 +439,128 @@ def projects_default(identifier: str) -> None:
     run_async(_default())
 
 
+@projects_group.command(name="configure")
+@click.argument("identifier", required=False)
+@click.option("--auto-detect", "-a", is_flag=True, help="Auto-detect available fields from V1 schema")
+@click.option("--reset", "-r", is_flag=True, help="Reset to default configuration")
+@click.option("--show", "-s", is_flag=True, help="Show current configuration")
+@handle_errors
+def projects_configure(
+    identifier: str | None,
+    auto_detect: bool,
+    reset: bool,
+    show: bool,
+) -> None:
+    """Configure query settings for a project.
+
+    Auto-detects available fields from your V1 instance to avoid
+    errors with custom schemas.
+
+    Examples:
+
+        v1 projects configure --auto-detect     # Configure default project
+
+        v1 projects configure 1 --auto-detect   # Configure project #1
+
+        v1 projects configure E-1234 --show     # Show config for E-1234
+
+        v1 projects configure --reset           # Reset to defaults
+    """
+
+    async def _configure() -> None:
+        from v1cli.config.schema_detector import auto_detect_project_config
+
+        settings = get_settings()
+
+        # Resolve project
+        if identifier:
+            bookmark = settings.get_bookmark(identifier)
+            if not bookmark:
+                console.print(f"[red]Project not found:[/red] {identifier}")
+                console.print("[dim]Use 'v1 projects add <number>' to bookmark first.[/dim]")
+                raise SystemExit(1)
+        else:
+            # Use default project
+            default_oid = settings.default_project
+            if not default_oid:
+                console.print("[red]No project specified and no default set.[/red]")
+                console.print("[dim]Use 'v1 projects configure <identifier>' or set a default first.[/dim]")
+                raise SystemExit(1)
+            bookmark = next(
+                (b for b in settings.bookmarks if b.oid == default_oid), None
+            )
+            if not bookmark:
+                console.print("[red]Default project not found in bookmarks.[/red]")
+                raise SystemExit(1)
+
+        if show:
+            _show_project_config(bookmark)
+            return
+
+        if reset:
+            bookmark.query_config = None
+            save_settings(settings)
+            console.print(f"[green]Reset configuration for {bookmark.name}[/green]")
+            console.print("[dim]Project will use default query settings.[/dim]")
+            return
+
+        if auto_detect:
+            console.print(f"[bold]Detecting schema for {bookmark.name}...[/bold]")
+            async with V1Client() as client:
+                config = await auto_detect_project_config(client)
+                bookmark.query_config = config
+                save_settings(settings)
+
+                console.print(f"[green]Configuration saved![/green]")
+                console.print(f"  Delivery Groups: {len(config.delivery_groups.select)} fields")
+                console.print(f"  Features: {len(config.features.select)} fields")
+                console.print(f"  Stories: {len(config.stories.select)} fields")
+                console.print(f"  Tasks: {len(config.tasks.select)} fields")
+                console.print(f"\n[dim]Run 'v1 projects configure --show' to see details.[/dim]")
+            return
+
+        # Default action: show current config or prompt for auto-detect
+        if bookmark.query_config and bookmark.query_config.is_configured():
+            _show_project_config(bookmark)
+        else:
+            console.print(f"[yellow]No custom configuration for {bookmark.name}[/yellow]")
+            console.print("[dim]Use --auto-detect to configure based on your V1 schema.[/dim]")
+
+    run_async(_configure())
+
+
+def _show_project_config(bookmark: Any) -> None:
+    """Display current query configuration for a project."""
+    from v1cli.config.settings import ProjectBookmark
+
+    console.print(f"\n[bold]Query Configuration: {bookmark.name}[/bold]")
+
+    if not bookmark.query_config or not bookmark.query_config.is_configured():
+        console.print("[yellow]Using default configuration[/yellow]")
+        return
+
+    config = bookmark.query_config
+    console.print(f"[dim]Last detected: {config.last_detected or 'Never'}[/dim]\n")
+
+    for name, asset_config in [
+        ("Delivery Groups", config.delivery_groups),
+        ("Features", config.features),
+        ("Stories", config.stories),
+        ("Tasks", config.tasks),
+    ]:
+        console.print(f"[cyan]{name}[/cyan]")
+        if asset_config.select:
+            console.print(f"  Select: {', '.join(asset_config.select)}")
+        else:
+            console.print("  Select: [dim](default)[/dim]")
+        if asset_config.filters:
+            console.print(f"  Filters: {', '.join(asset_config.filters)}")
+        if asset_config.columns:
+            col_names = [c.label or c.field for c in asset_config.columns]
+            console.print(f"  Columns: {', '.join(col_names)}")
+        console.print()
+
+
 # =============================================================================
 # Story Listing Commands
 # =============================================================================
@@ -645,54 +769,39 @@ def roadmap(project_name: str | None, include_done: bool, output_file: str | Non
 
     async def _roadmap() -> None:
         async with V1Client() as client:
-            project_oid = await _resolve_project_oid_async(project_name, client)
-            if not project_oid:
-                return
+            project_oid, query_config = await _resolve_project_with_config(project_name, client)
 
-            deliveries = await client.get_delivery_groups(project_oid, include_done=include_done)
+            # Use config-based query
+            dg_config = query_config.delivery_groups
+            results = await client.query_with_config(
+                asset_type="Epic",
+                parent_oid=project_oid,
+                parent_field="Super",
+                config_select=dg_config.select,
+                config_filters=dg_config.filters,
+                config_sort=dg_config.sort,
+                include_done=include_done,
+            )
 
-            if not deliveries:
+            if not results:
                 console.print("[yellow]No delivery groups found.[/yellow]")
                 return
 
-            # Handle file output
+            # Handle file output (use raw results)
             if output_file:
-                _write_deliveries_to_file(deliveries, output_file, output_format)
-                console.print(f"[green]Wrote {len(deliveries)} delivery groups to {output_file}[/green]")
+                _write_results_to_file(results, output_file, output_format)
+                console.print(f"[green]Wrote {len(results)} delivery groups to {output_file}[/green]")
                 return
 
-            table = Table(title="Roadmap (Delivery Groups)")
-            table.add_column("Number", style="cyan", no_wrap=True)
-            table.add_column("Name")
-            table.add_column("Type", style="dim")
-            table.add_column("Status")
-            table.add_column("Begin", no_wrap=True)
-            table.add_column("End", no_wrap=True)
-            table.add_column("Progress", justify="right")
-            table.add_column("Pts", justify="right")
-
-            for d in deliveries:
-                # Format dates (remove time portion if present)
-                begin = (d.planned_start or "")[:10] if d.planned_start else "-"
-                end = (d.planned_end or "")[:10] if d.planned_end else "-"
-                # Format progress as percentage
-                progress = f"{int(d.progress * 100)}%" if d.progress is not None else "-"
-                # Format estimate
-                estimate = str(int(d.estimate)) if d.estimate is not None else "-"
-
-                table.add_row(
-                    d.number,
-                    d.name[:40] + ("..." if len(d.name) > 40 else ""),
-                    d.delivery_type or "-",
-                    d.status or "-",
-                    begin,
-                    end,
-                    progress,
-                    estimate,
-                )
+            # Build table from configuration
+            table = build_table_from_config(
+                "Roadmap (Delivery Groups)",
+                results,
+                dg_config,
+            )
 
             console.print(table)
-            console.print(f"\n[dim]Total: {len(deliveries)} delivery groups[/dim]")
+            console.print(f"\n[dim]Total: {len(results)} delivery groups[/dim]")
 
     run_async(_roadmap())
 
@@ -1081,6 +1190,30 @@ async def _resolve_project_oid_async(project_identifier: str | None, client: V1C
     raise SystemExit(1)
 
 
+async def _resolve_project_with_config(
+    project_identifier: str | None, client: V1Client
+) -> tuple[str, ProjectQueryConfig]:
+    """Resolve project OID and return its query configuration.
+
+    Returns:
+        Tuple of (project_oid, query_config). The query_config is either
+        the project's custom config or the defaults.
+    """
+    project_oid = await _resolve_project_oid_async(project_identifier, client)
+
+    settings = get_settings()
+    # Find bookmark for this project
+    bookmark = next(
+        (b for b in settings.bookmarks if b.oid == project_oid),
+        None
+    )
+
+    if bookmark and bookmark.query_config and bookmark.query_config.is_configured():
+        return project_oid, bookmark.query_config
+
+    return project_oid, get_default_project_query_config()
+
+
 def _resolve_project_oid(project_identifier: str | None) -> str:
     """Resolve a project OID from name, number, OID token, or default (sync, bookmarks only)."""
     if project_identifier:
@@ -1175,6 +1308,54 @@ def _write_projects_to_file(projects: list[Any], filepath: str, fmt: str) -> Non
         lines = ["Number\tName\tCategory\tParent"]
         for p in projects:
             lines.append(f"{p.number}\t{p.name}\t{p.category or '-'}\t{p.parent_name or '-'}")
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+
+
+def _write_results_to_file(results: list[dict[str, Any]], filepath: str, fmt: str) -> None:
+    """Write raw query results to a file in the specified format."""
+    if fmt == "json":
+        # Clean up _oid to oid
+        data = []
+        for item in results:
+            clean_item = {"oid": item.get("_oid", "")}
+            for key, value in item.items():
+                if not key.startswith("_"):
+                    clean_item[key] = value
+            data.append(clean_item)
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+    elif fmt == "csv":
+        if not results:
+            return
+        # Get all keys from first result (excluding internal keys)
+        keys = ["oid"] + [k for k in results[0].keys() if not k.startswith("_")]
+        with open(filepath, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(keys)
+            for item in results:
+                row = [item.get("_oid", "")]
+                for key in keys[1:]:
+                    value = item.get(key, "")
+                    if isinstance(value, list):
+                        value = ", ".join(str(v) for v in value)
+                    row.append(value if value is not None else "")
+                writer.writerow(row)
+
+    else:  # table format as plain text
+        if not results:
+            return
+        keys = [k for k in results[0].keys() if not k.startswith("_")]
+        lines = ["\t".join(keys)]
+        for item in results:
+            row = []
+            for key in keys:
+                value = item.get(key, "-")
+                if isinstance(value, list):
+                    value = ", ".join(str(v) for v in value)
+                row.append(str(value) if value is not None else "-")
+            lines.append("\t".join(row))
         with open(filepath, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
 

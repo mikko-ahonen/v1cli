@@ -35,11 +35,59 @@ class StatusMapping(BaseModel):
         )
 
 
+class ColumnConfig(BaseModel):
+    """Configuration for a single display column."""
+
+    field: str  # API field name (e.g., "Status.Name")
+    label: str | None = None  # Display label (defaults to field name)
+    style: str | None = None  # Rich style (e.g., "cyan", "bold")
+    max_width: int | None = None  # Truncate text to this width
+    format: str | None = None  # Format type: "date", "percent", "points"
+    justify: str = "left"  # "left", "right", "center"
+
+
+class AssetQueryConfig(BaseModel):
+    """Query and display configuration for an asset type."""
+
+    select: list[str] = Field(default_factory=list)  # Fields to query from API
+    filters: list[str] = Field(default_factory=list)  # Filter conditions
+    sort: list[str] = Field(default_factory=list)  # Sort order
+    columns: list[ColumnConfig] = Field(default_factory=list)  # Display columns
+
+    def is_configured(self) -> bool:
+        """Check if this asset config has been set up."""
+        return bool(self.select)
+
+
+class ProjectQueryConfig(BaseModel):
+    """Query configurations for all asset types in a project."""
+
+    version: int = Field(default=1, description="Config schema version")
+    last_detected: str | None = Field(default=None, description="ISO timestamp of last auto-detection")
+
+    delivery_groups: AssetQueryConfig = Field(default_factory=AssetQueryConfig)
+    features: AssetQueryConfig = Field(default_factory=AssetQueryConfig)
+    stories: AssetQueryConfig = Field(default_factory=AssetQueryConfig)
+    tasks: AssetQueryConfig = Field(default_factory=AssetQueryConfig)
+
+    def is_configured(self) -> bool:
+        """Check if any query config has been set."""
+        return (
+            self.delivery_groups.is_configured()
+            or self.features.is_configured()
+            or self.stories.is_configured()
+            or self.tasks.is_configured()
+        )
+
+
 class ProjectBookmark(BaseModel):
-    """A bookmarked project."""
+    """A bookmarked project with optional query configuration."""
 
     name: str
     oid: str
+    query_config: ProjectQueryConfig | None = Field(
+        default=None, description="Custom query configurations for this project"
+    )
 
 
 class Settings(BaseModel):

@@ -203,6 +203,58 @@ class V1Client:
 
         return sorted(attributes, key=lambda x: x["name"])
 
+    async def query_with_config(
+        self,
+        asset_type: str,
+        parent_oid: str | None = None,
+        parent_field: str = "Super",
+        config_select: list[str] | None = None,
+        config_filters: list[str] | None = None,
+        config_sort: list[str] | None = None,
+        include_done: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Execute a query using configuration-based field lists.
+
+        This method allows CLI commands to use custom query configurations
+        instead of hardcoded field lists.
+
+        Args:
+            asset_type: V1 asset type (e.g., "Epic", "Story", "Task")
+            parent_oid: Optional parent OID to filter by
+            parent_field: Field name for parent relationship (default "Super")
+            config_select: List of fields to select (from AssetQueryConfig)
+            config_filters: List of filter conditions (from AssetQueryConfig)
+            config_sort: List of sort fields (from AssetQueryConfig)
+            include_done: Include closed/completed items
+
+        Returns:
+            List of raw result dictionaries from V1 API
+        """
+        filters: list[str] = []
+
+        # Add parent filter if specified
+        if parent_oid:
+            filters.append(f"{parent_field}='{parent_oid}'")
+
+        # Add config filters
+        if config_filters:
+            filters.extend(config_filters)
+
+        # Add done/closed filter
+        if not include_done:
+            filters.append("AssetState!='Closed'")
+
+        # Use provided fields or minimal default
+        select = config_select or ["Name", "Number"]
+        sort = config_sort or ["Name"]
+
+        return await self._query(
+            asset_type,
+            select=select,
+            filter_=filters if filters else None,
+            sort=sort,
+        )
+
     # High-level methods
 
     async def get_me(self) -> Member:
