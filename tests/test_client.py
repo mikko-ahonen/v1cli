@@ -499,7 +499,6 @@ class TestV1ClientDeliveryGroups:
                     "Number": "E-500",
                     "Name": "Q1 Release",
                     "Status.Name": "In Progress",
-                    "Type.Name": "Release",
                     "PlannedStart": "2024-01-01",
                     "PlannedEnd": "2024-03-31",
                     "PercentDone": 0.5,
@@ -514,7 +513,7 @@ class TestV1ClientDeliveryGroups:
         assert len(groups) == 1
         assert groups[0].oid == "Epic:500"
         assert groups[0].name == "Q1 Release"
-        assert groups[0].delivery_type == "Release"
+        assert groups[0].delivery_type is None  # Type attribute not available
         assert groups[0].planned_start == "2024-01-01"
         assert groups[0].planned_end == "2024-03-31"
         assert groups[0].progress == 0.5

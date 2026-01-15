@@ -484,7 +484,6 @@ class V1Client:
                 "Name",
                 "Number",
                 "Status.Name",
-                "Type.Name",
                 "PlannedStart",
                 "PlannedEnd",
                 "PercentDone",
@@ -500,7 +499,7 @@ class V1Client:
                 name=item.get("Name", ""),
                 number=item.get("Number", ""),
                 status=item.get("Status.Name"),
-                delivery_type=item.get("Type.Name"),
+                delivery_type=None,  # Type attribute not available in all V1 instances
                 planned_start=item.get("PlannedStart"),
                 planned_end=item.get("PlannedEnd"),
                 progress=item.get("PercentDone"),
@@ -569,7 +568,8 @@ class V1Client:
         Returns:
             List of child features
         """
-        filters = [f"Super='{parent_oid}'", "Type.Name='Feature'"]
+        # Query child Epics under the parent (features are Epics under Delivery Groups)
+        filters = [f"Super='{parent_oid}'", "Category.Name!='Delivery Group'"]
         if not include_done:
             filters.append("AssetState!='Closed'")
 
@@ -790,9 +790,9 @@ class V1Client:
     async def get_feature_by_number(self, identifier: str) -> Feature | None:
         """Get a feature by its display number (e.g., E-100) or OID (e.g., Epic:100).
 
-        Features are Epic assets with Type='Feature'.
+        Features are Epic assets under Delivery Groups or Business Epics.
         """
-        select = ["Number", "Name", "Description", "Status.Name", "Status", "Scope.Name", "Scope", "Super.Name", "Type.Name"]
+        select = ["Number", "Name", "Description", "Status.Name", "Status", "Scope.Name", "Scope", "Super.Name"]
 
         # Check if it's an OID token
         if ":" in identifier and identifier.split(":")[0].lower() == "epic":
