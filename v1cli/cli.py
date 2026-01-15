@@ -288,7 +288,7 @@ def _list_projects(show_all: bool, output_file: str | None, output_format: str) 
                         bookmark_marker = "★ def"
                 row = [
                     project.number,
-                    project.name[:50] + ("..." if len(project.name) > 50 else ""),
+                    project.name,
                     project.status or "-",
                     project.parent_name or "-",
                 ]
@@ -900,7 +900,7 @@ def features(parent_id: str | None, include_done: bool) -> None:
                 table.add_row(
                     str(idx),
                     feature.number,
-                    feature.name[:50] + ("..." if len(feature.name) > 50 else ""),
+                    feature.name,
                     feature.status or "-",
                     feature.parent_name or feature.scope_name,
                 )
@@ -1344,7 +1344,7 @@ def _print_stories_table(stories: list[Any], title: str = "Stories") -> None:
         table.add_row(
             s.number,
             status_display,
-            s.name[:40] + ("..." if len(s.name) > 40 else ""),
+            s.name,
             pts,
             s.scope_name,
         )
