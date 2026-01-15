@@ -93,3 +93,23 @@ class LocalStorage:
         except (json.JSONDecodeError, IndexError):
             pass
         return None
+
+    def cache_stories(self, stories: list[tuple[str, str]]) -> None:
+        """Cache the last stories list (number, oid pairs)."""
+        import json
+        cache_file = self._config_dir / "stories_cache.json"
+        cache_file.write_text(json.dumps(stories))
+
+    def get_cached_story(self, index: int) -> tuple[str, str] | None:
+        """Get a cached story by 1-based index. Returns (number, oid) or None."""
+        import json
+        cache_file = self._config_dir / "stories_cache.json"
+        if not cache_file.exists():
+            return None
+        try:
+            stories = json.loads(cache_file.read_text())
+            if 1 <= index <= len(stories):
+                return tuple(stories[index - 1])
+        except (json.JSONDecodeError, IndexError):
+            pass
+        return None

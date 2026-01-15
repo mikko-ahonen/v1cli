@@ -568,8 +568,9 @@ def _show_project_config(bookmark: Any) -> None:
 
 @cli.command()
 @click.option("--all", "-a", "include_done", is_flag=True, help="Include completed stories")
+@click.option("--format", "-f", "output_format", type=click.Choice(["table", "json"]), default="table", help="Output format")
 @handle_errors
-def mine(include_done: bool) -> None:
+def mine(include_done: bool, output_format: str) -> None:
     """List stories assigned to me."""
 
     async def _mine() -> None:
@@ -582,7 +583,15 @@ def mine(include_done: bool) -> None:
             )
 
             if not stories:
-                console.print("[yellow]No stories assigned to you.[/yellow]")
+                if output_format == "json":
+                    console.print("[]")
+                else:
+                    console.print("[yellow]No stories assigned to you.[/yellow]")
+                return
+
+            if output_format == "json":
+                data = [s.model_dump() for s in stories]
+                console.print(json.dumps(data, indent=2))
                 return
 
             _print_stories_table(stories, title="My Stories")
@@ -594,8 +603,9 @@ def mine(include_done: bool) -> None:
 @click.argument("parent_number", required=False)
 @click.option("--project", "-p", "project_id", help="Project # (1-99), V1 number (E-nnn), or OID")
 @click.option("--all", "-a", "include_done", is_flag=True, help="Include completed stories")
+@click.option("--format", "-f", "output_format", type=click.Choice(["table", "json"]), default="table", help="Output format")
 @handle_errors
-def stories(parent_number: str | None, project_id: str | None, include_done: bool) -> None:
+def stories(parent_number: str | None, project_id: str | None, include_done: bool, output_format: str) -> None:
     """List stories under a feature, story, or entire project.
 
     \b
@@ -605,10 +615,14 @@ def stories(parent_number: str | None, project_id: str | None, include_done: boo
         v1 stories 3            # Stories under feature #3 from last 'v1 features'
         v1 stories E-123        # Stories under feature E-123
         v1 stories S-456        # Sub-stories under story S-456
+        v1 stories -f json      # Output as JSON
     """
 
     async def _stories() -> None:
         async with V1Client() as client:
+            story_list: list[Any] = []
+            title = "Stories"
+
             # If a specific parent is given, use that
             if parent_number:
                 # Check if it's a row number from cached features list
@@ -619,7 +633,7 @@ def stories(parent_number: str | None, project_id: str | None, include_done: boo
                         parent = await client.get_feature_by_number(feature_number)
                         if parent:
                             parent_oid = parent.oid
-                            parent_display = f"{parent.number}: {parent.name}"
+                            title = f"Stories under {parent.number}: {parent.name}"
                         else:
                             console.print(f"[red]Cached feature not found:[/red] {feature_number}")
                             raise SystemExit(1)
@@ -635,7 +649,7 @@ def stories(parent_number: str | None, project_id: str | None, include_done: boo
                         console.print(f"[red]Feature not found:[/red] {parent_number}")
                         raise SystemExit(1)
                     parent_oid = parent.oid
-                    parent_display = f"{parent.number}: {parent.name}"
+                    title = f"Stories under {parent.number}: {parent.name}"
                 else:
                     # Try as Story (S-xxx or Story:xxx)
                     parent = await client.get_story_by_number(parent_number)
@@ -643,15 +657,9 @@ def stories(parent_number: str | None, project_id: str | None, include_done: boo
                         console.print(f"[red]Story not found:[/red] {parent_number}")
                         raise SystemExit(1)
                     parent_oid = parent.oid
-                    parent_display = f"{parent.number}: {parent.name}"
+                    title = f"Stories under {parent.number}: {parent.name}"
 
                 story_list = await client.get_stories(parent_oid, include_done=include_done)
-
-                if not story_list:
-                    console.print(f"[yellow]No stories under {parent_display}[/yellow]")
-                    return
-
-                _print_stories_table(story_list, title=f"Stories under {parent_display}")
             else:
                 # No parent given - get all stories under the project
                 project_oid = await _resolve_project_oid_async(project_id, client)
@@ -666,16 +674,25 @@ def stories(parent_number: str | None, project_id: str | None, include_done: boo
                     all_features.extend(dg_features)
 
                 # Get stories under all features
-                story_list: list[Any] = []
                 for feature in all_features:
                     feature_stories = await client.get_stories(feature.oid, include_done=include_done)
                     story_list.extend(feature_stories)
 
-                if not story_list:
-                    console.print("[yellow]No stories found.[/yellow]")
-                    return
+                title = "All Stories"
 
-                _print_stories_table(story_list, title="All Stories")
+            if not story_list:
+                if output_format == "json":
+                    console.print("[]")
+                else:
+                    console.print("[yellow]No stories found.[/yellow]")
+                return
+
+            if output_format == "json":
+                data = [s.model_dump() for s in story_list]
+                console.print(json.dumps(data, indent=2))
+                return
+
+            _print_stories_table(story_list, title=title)
 
     run_async(_stories())
 
@@ -860,8 +877,9 @@ def roadmap(project_name: str | None, include_done: bool, output_file: str | Non
 @cli.command()
 @click.option("--parent", "-p", "parent_id", help="Parent: project # (1-99), V1 number (E-nnn), or OID")
 @click.option("--all", "-a", "include_done", is_flag=True, help="Include closed features")
+@click.option("--format", "-f", "output_format", type=click.Choice(["table", "json"]), default="table", help="Output format")
 @handle_errors
-def features(parent_id: str | None, include_done: bool) -> None:
+def features(parent_id: str | None, include_done: bool, output_format: str) -> None:
     """List features under a Delivery Group or Project.
 
     When parent is a Project, shows features under all Delivery Groups.
@@ -883,11 +901,19 @@ def features(parent_id: str | None, include_done: bool) -> None:
                 feature_list.extend(dg_features)
 
             if not feature_list:
-                console.print("[yellow]No features found.[/yellow]")
+                if output_format == "json":
+                    console.print("[]")
+                else:
+                    console.print("[yellow]No features found.[/yellow]")
                 return
 
             # Cache features for later reference by row number
             storage.cache_features([(f.number, f.oid) for f in feature_list])
+
+            if output_format == "json":
+                data = [f.model_dump() for f in feature_list]
+                console.print(json.dumps(data, indent=2))
+                return
 
             table = Table(title="Features")
             table.add_column("#", style="dim", justify="right")
@@ -1004,13 +1030,31 @@ def story_create(
 
 @cli.command()
 @click.argument("story_number")
+@click.option("--format", "-f", "output_format", type=click.Choice(["table", "json"]), default="table", help="Output format")
 @handle_errors
-def tasks(story_number: str) -> None:
-    """List tasks for a story (S-nnnnn or Story:nnnnn)."""
+def tasks(story_number: str, output_format: str) -> None:
+    """List tasks for a story.
+
+    \b
+    Examples:
+        v1 tasks 3         # Tasks for story #3 from last 'v1 stories'
+        v1 tasks S-123     # Tasks for story S-123
+    """
 
     async def _tasks() -> None:
         async with V1Client() as client:
-            s = await client.get_story_by_number(story_number)
+            # Check if it's a row number from cached stories list
+            if story_number.isdigit():
+                cached = storage.get_cached_story(int(story_number))
+                if cached:
+                    cached_number, cached_oid = cached
+                    s = await client.get_story_by_number(cached_number)
+                else:
+                    console.print(f"[red]No cached story at row {story_number}. Run 'v1 stories' first.[/red]")
+                    raise SystemExit(1)
+            else:
+                s = await client.get_story_by_number(story_number)
+
             if not s:
                 console.print(f"[red]Story not found:[/red] {story_number}")
                 raise SystemExit(1)
@@ -1018,7 +1062,15 @@ def tasks(story_number: str) -> None:
             task_list = await client.get_tasks(s.oid)
 
             if not task_list:
-                console.print(f"[yellow]No tasks for {story_number}[/yellow]")
+                if output_format == "json":
+                    console.print("[]")
+                else:
+                    console.print(f"[yellow]No tasks for {story_number}[/yellow]")
+                return
+
+            if output_format == "json":
+                data = [t.model_dump() for t in task_list]
+                console.print(json.dumps(data, indent=2))
                 return
 
             console.print(f"[bold]Tasks for {s.number}: {s.name}[/bold]\n")
@@ -1323,14 +1375,18 @@ def _print_stories_table(stories: list[Any], title: str = "Stories") -> None:
     """Print a formatted table of stories."""
     settings = get_settings()
 
+    # Cache stories for later reference by row number
+    storage.cache_stories([(s.number, s.oid) for s in stories])
+
     table = Table(title=title)
+    table.add_column("#", style="dim", justify="right")
     table.add_column("Number", style="cyan", no_wrap=True)
     table.add_column("Status", no_wrap=True)
     table.add_column("Name")
     table.add_column("Pts", justify="right")
     table.add_column("Project", style="dim")
 
-    for s in stories:
+    for idx, s in enumerate(stories, 1):
         status_enum = None
         if s.status_oid:
             status_enum = settings.status_mapping.get_status(s.status_oid)
@@ -1342,6 +1398,7 @@ def _print_stories_table(stories: list[Any], title: str = "Stories") -> None:
         pts = str(int(s.estimate)) if s.estimate else "-"
 
         table.add_row(
+            str(idx),
             s.number,
             status_display,
             s.name,
