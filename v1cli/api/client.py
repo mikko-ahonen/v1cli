@@ -159,6 +159,50 @@ class V1Client:
                 message = response.text
             raise V1APIError(f"API error: {message}", response.status_code)
 
+    async def get_meta(self, asset_type: str) -> dict[str, Any]:
+        """Get schema metadata for an asset type.
+
+        Args:
+            asset_type: The asset type (e.g., 'Epic', 'Story', 'Task')
+
+        Returns:
+            Dictionary with asset type metadata including attributes
+        """
+        response = await self.client.get(
+            f"/meta.v1/{asset_type}",
+            headers={"Accept": "application/json"},
+        )
+        self._check_response(response)
+        return response.json()
+
+    async def get_asset_attributes(self, asset_type: str) -> list[dict[str, Any]]:
+        """Get available attributes for an asset type.
+
+        Args:
+            asset_type: The asset type (e.g., 'Epic', 'Story', 'Task')
+
+        Returns:
+            List of attribute definitions with name, type, and other metadata
+        """
+        meta = await self.get_meta(asset_type)
+        attributes = []
+
+        for attr_name, attr_data in meta.get("Attributes", {}).items():
+            # Skip internal/system attributes
+            if attr_name.startswith("_"):
+                continue
+
+            attributes.append({
+                "name": attr_data.get("Name", attr_name),
+                "type": attr_data.get("AttributeType", "Unknown"),
+                "is_readonly": attr_data.get("IsReadonly", False),
+                "is_required": attr_data.get("IsRequired", False),
+                "is_multi_value": attr_data.get("IsMultivalue", False),
+                "related_asset": attr_data.get("RelatedAsset", {}).get("nameref"),
+            })
+
+        return sorted(attributes, key=lambda x: x["name"])
+
     # High-level methods
 
     async def get_me(self) -> Member:

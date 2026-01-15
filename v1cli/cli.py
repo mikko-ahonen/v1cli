@@ -149,6 +149,65 @@ def setup() -> None:
     run_async(_setup())
 
 
+@cli.command()
+@click.argument("asset_type", default="Epic")
+@click.option("--filter", "-f", "filter_text", help="Filter attributes by name (case-insensitive)")
+@handle_errors
+def schema(asset_type: str, filter_text: str | None) -> None:
+    """Show available attributes for an asset type.
+
+    Common asset types: Epic, Story, Task, Member, StoryStatus
+
+    Example: v1 schema Epic --filter estimate
+    """
+
+    async def _schema() -> None:
+        async with V1Client() as client:
+            console.print(f"[bold]Schema for {asset_type}[/bold]\n")
+
+            try:
+                attributes = await client.get_asset_attributes(asset_type)
+            except Exception as e:
+                console.print(f"[red]Failed to get schema:[/red] {e}")
+                console.print("[dim]Common asset types: Epic, Story, Task, Member, StoryStatus[/dim]")
+                raise SystemExit(1)
+
+            if filter_text:
+                filter_lower = filter_text.lower()
+                attributes = [a for a in attributes if filter_lower in a["name"].lower()]
+
+            if not attributes:
+                console.print("[yellow]No attributes found.[/yellow]")
+                return
+
+            table = Table()
+            table.add_column("Attribute", style="cyan")
+            table.add_column("Type")
+            table.add_column("Flags", style="dim")
+            table.add_column("Related To", style="magenta")
+
+            for attr in attributes:
+                flags = []
+                if attr["is_required"]:
+                    flags.append("required")
+                if attr["is_readonly"]:
+                    flags.append("readonly")
+                if attr["is_multi_value"]:
+                    flags.append("multi")
+
+                table.add_row(
+                    attr["name"],
+                    attr["type"],
+                    ", ".join(flags) if flags else "-",
+                    attr["related_asset"] or "-",
+                )
+
+            console.print(table)
+            console.print(f"\n[dim]Total: {len(attributes)} attributes[/dim]")
+
+    run_async(_schema())
+
+
 # =============================================================================
 # Project Commands
 # =============================================================================
