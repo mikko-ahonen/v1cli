@@ -1029,8 +1029,9 @@ def task_done(identifier: str) -> None:
 @click.option("--project", "-p", "project_id", help="Project # (1-99), V1 number (E-nnn), or OID")
 @click.option("--depth", "-d", type=click.Choice(["deliveries", "features", "stories", "tasks"]), default="stories", help="Tree depth")
 @click.option("--all", "-a", "include_done", is_flag=True, help="Include closed items")
+@click.option("--types", "-t", "show_types", is_flag=True, help="Show asset types (Epic, Story, Task)")
 @handle_errors
-def tree(project_id: str | None, depth: str, include_done: bool) -> None:
+def tree(project_id: str | None, depth: str, include_done: bool, show_types: bool) -> None:
     """Show project hierarchy as a tree.
 
     Displays the full structure: Project → Delivery Groups → Features → Stories → Tasks
@@ -1047,7 +1048,10 @@ def tree(project_id: str | None, depth: str, include_done: bool) -> None:
             project_name = project.name if project else project_oid
 
             # Create tree root
-            root = Tree(f"[bold cyan]{project_name}[/bold cyan]")
+            root_label = f"[bold cyan]{project_name}[/bold cyan]"
+            if show_types:
+                root_label = f"[dim]Scope:[/dim] {root_label}"
+            root = Tree(root_label)
 
             # Get delivery groups
             deliveries = await client.get_delivery_groups(project_oid, include_done=include_done)
@@ -1062,6 +1066,8 @@ def tree(project_id: str | None, depth: str, include_done: bool) -> None:
             # Add delivery groups
             for dg in deliveries:
                 dg_label = f"[bold magenta]{dg.number}[/bold magenta] {dg.name}"
+                if show_types:
+                    dg_label = f"[dim]Epic:[/dim] {dg_label}"
                 if dg.status:
                     dg_label += f" [dim]({dg.status})[/dim]"
                 dg_branch = root.add(dg_label)
@@ -1069,11 +1075,11 @@ def tree(project_id: str | None, depth: str, include_done: bool) -> None:
                 if depth in ["features", "stories", "tasks"]:
                     # Get features under this delivery group
                     features = await client.get_features(dg.oid, include_done=include_done)
-                    await _add_features_to_tree(dg_branch, features, depth, include_done, client)
+                    await _add_features_to_tree(dg_branch, features, depth, include_done, client, show_types)
 
             # Add features directly under project (not under a delivery group)
             if direct_features:
-                await _add_features_to_tree(root, direct_features, depth, include_done, client)
+                await _add_features_to_tree(root, direct_features, depth, include_done, client, show_types)
 
             console.print(root)
 
@@ -1083,10 +1089,13 @@ def tree(project_id: str | None, depth: str, include_done: bool) -> None:
         depth: str,
         include_done: bool,
         client: V1Client,
+        show_types: bool,
     ) -> None:
         """Add features and their children to the tree."""
         for feature in features:
             f_label = f"[cyan]{feature.number}[/cyan] {feature.name}"
+            if show_types:
+                f_label = f"[dim]Epic:[/dim] {f_label}"
             if feature.status:
                 f_label += f" [dim]({feature.status})[/dim]"
             f_branch = parent_branch.add(f_label)
@@ -1104,6 +1113,8 @@ def tree(project_id: str | None, depth: str, include_done: bool) -> None:
                     color = STATUS_COLORS.get(status_enum, "white") if status_enum else "white"
 
                     s_label = f"[green]{story.number}[/green] {story.name}"
+                    if show_types:
+                        s_label = f"[dim]Story:[/dim] {s_label}"
                     s_label += f" [{color}]{icon}[/{color}]"
                     if story.estimate:
                         s_label += f" [dim]{int(story.estimate)}pts[/dim]"
@@ -1118,6 +1129,8 @@ def tree(project_id: str | None, depth: str, include_done: bool) -> None:
                             t_label = f"{done_marker} {task.name}"
                             if task.number:
                                 t_label = f"[dim]{task.number}[/dim] {t_label}"
+                            if show_types:
+                                t_label = f"[dim]Task:[/dim] {t_label}"
                             s_branch.add(t_label)
 
     run_async(_tree())

@@ -680,3 +680,48 @@ class TestTreeCommand:
 
         assert result.exit_code == 1
         assert "No project specified" in result.output
+
+    def test_tree_with_types(
+        self, runner: CliRunner, mock_storage: Path, mock_client: MagicMock
+    ) -> None:
+        """tree --types shows asset type labels."""
+        from v1cli.storage.local import LocalStorage
+        storage = LocalStorage()
+        storage.add_project_bookmark("Test Project", "Epic:1000")
+        storage.set_default_project("Epic:1000")
+
+        mock_client.get_project_by_number = AsyncMock(return_value=Project(
+            oid="Epic:1000",
+            number="E-1000",
+            name="Test Project",
+        ))
+        mock_client.get_delivery_groups = AsyncMock(return_value=[
+            DeliveryGroup(
+                oid="Epic:100",
+                number="E-100",
+                name="Q1 Release",
+            ),
+        ])
+        mock_client.get_features = AsyncMock(return_value=[
+            Feature(
+                oid="Epic:200",
+                number="E-200",
+                name="Feature A",
+            ),
+        ])
+        mock_client.get_stories = AsyncMock(return_value=[
+            Story(
+                oid="Story:300",
+                number="S-300",
+                name="Story 1",
+                scope_name="Test",
+            ),
+        ])
+
+        with patch("v1cli.cli.V1Client", return_value=mock_client):
+            result = runner.invoke(cli, ["tree", "--types"])
+
+        assert result.exit_code == 0
+        assert "Scope:" in result.output
+        assert "Epic:" in result.output
+        assert "Story:" in result.output
