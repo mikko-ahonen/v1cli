@@ -451,6 +451,7 @@ class TestFeaturesCommand:
                 scope_name="Test",
             ),
         ])
+        mock_client.get_delivery_groups = AsyncMock(return_value=[])
 
         with patch("v1cli.cli.V1Client", return_value=mock_client):
             result = runner.invoke(cli, ["features"])

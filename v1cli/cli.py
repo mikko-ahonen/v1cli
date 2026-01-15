@@ -811,7 +811,10 @@ def roadmap(project_name: str | None, include_done: bool, output_file: str | Non
 @click.option("--all", "-a", "include_done", is_flag=True, help="Include closed features")
 @handle_errors
 def features(parent_id: str | None, include_done: bool) -> None:
-    """List features under a Delivery Group or Project."""
+    """List features under a Delivery Group or Project.
+
+    When parent is a Project, shows features under all Delivery Groups.
+    """
 
     async def _features() -> None:
         async with V1Client() as client:
@@ -819,7 +822,14 @@ def features(parent_id: str | None, include_done: bool) -> None:
             if not parent_oid:
                 return
 
+            # Get features directly under the parent
             feature_list = await client.get_features(parent_oid, include_done=include_done)
+
+            # Also get features under any Delivery Groups (for project-level queries)
+            delivery_groups = await client.get_delivery_groups(parent_oid, include_done=include_done)
+            for dg in delivery_groups:
+                dg_features = await client.get_features(dg.oid, include_done=include_done)
+                feature_list.extend(dg_features)
 
             if not feature_list:
                 console.print("[yellow]No features found.[/yellow]")
@@ -829,14 +839,14 @@ def features(parent_id: str | None, include_done: bool) -> None:
             table.add_column("Number", style="cyan")
             table.add_column("Name")
             table.add_column("Status")
-            table.add_column("Project", style="dim")
+            table.add_column("Parent", style="dim")
 
             for feature in feature_list:
                 table.add_row(
                     feature.number,
                     feature.name[:50] + ("..." if len(feature.name) > 50 else ""),
                     feature.status or "-",
-                    feature.scope_name,
+                    feature.parent_name or feature.scope_name,
                 )
 
             console.print(table)
