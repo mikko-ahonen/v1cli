@@ -486,7 +486,6 @@ class V1Client:
                 "Status.Name",
                 "PlannedStart",
                 "PlannedEnd",
-                "PercentDone",
                 "Estimate",
             ],
             filter_=filters,
@@ -502,7 +501,7 @@ class V1Client:
                 delivery_type=None,  # Type attribute not available in all V1 instances
                 planned_start=item.get("PlannedStart"),
                 planned_end=item.get("PlannedEnd"),
-                progress=item.get("PercentDone"),
+                progress=None,  # PercentDone not available in all V1 instances
                 estimate=item.get("Estimate"),
             )
             for item in results
