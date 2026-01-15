@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from v1cli.api.models import Feature, Member, Project, Story, Task
+from v1cli.api.models import DeliveryGroup, Feature, Member, Project, Story, Task
 from v1cli.cli import cli
 from v1cli.config.settings import ProjectBookmark, Settings, reset_settings
 
@@ -549,3 +549,134 @@ class TestHelpMessages:
 
         assert result.exit_code == 0
         assert "Project #" in result.output
+
+    def test_tree_help(self, runner: CliRunner) -> None:
+        """tree help shows depth options."""
+        result = runner.invoke(cli, ["tree", "--help"])
+
+        assert result.exit_code == 0
+        assert "depth" in result.output.lower()
+        assert "deliveries" in result.output
+        assert "features" in result.output
+        assert "stories" in result.output
+        assert "tasks" in result.output
+
+
+class TestTreeCommand:
+    """Tests for 'v1 tree' command."""
+
+    def test_tree_with_deliveries(
+        self, runner: CliRunner, mock_storage: Path, mock_client: MagicMock
+    ) -> None:
+        """tree shows project hierarchy."""
+        from v1cli.storage.local import LocalStorage
+        storage = LocalStorage()
+        storage.add_project_bookmark("Test Project", "Epic:1000")
+        storage.set_default_project("Epic:1000")
+
+        mock_client.get_project_by_number = AsyncMock(return_value=Project(
+            oid="Epic:1000",
+            number="E-1000",
+            name="Test Project",
+        ))
+        mock_client.get_delivery_groups = AsyncMock(return_value=[
+            DeliveryGroup(
+                oid="Epic:100",
+                number="E-100",
+                name="Q1 Release",
+                status="In Progress",
+            ),
+        ])
+        mock_client.get_features = AsyncMock(return_value=[
+            Feature(
+                oid="Epic:200",
+                number="E-200",
+                name="Feature A",
+                status="Active",
+            ),
+        ])
+        mock_client.get_stories = AsyncMock(return_value=[
+            Story(
+                oid="Story:300",
+                number="S-300",
+                name="Story 1",
+                scope_name="Test",
+                estimate=5.0,
+            ),
+        ])
+
+        with patch("v1cli.cli.V1Client", return_value=mock_client):
+            result = runner.invoke(cli, ["tree", "--depth", "stories"])
+
+        assert result.exit_code == 0
+        assert "Test Project" in result.output
+        assert "E-100" in result.output
+        assert "Q1 Release" in result.output
+        assert "E-200" in result.output
+        assert "Feature A" in result.output
+        assert "S-300" in result.output
+        assert "Story 1" in result.output
+
+    def test_tree_deliveries_only(
+        self, runner: CliRunner, mock_storage: Path, mock_client: MagicMock
+    ) -> None:
+        """tree --depth deliveries shows only delivery groups."""
+        from v1cli.storage.local import LocalStorage
+        storage = LocalStorage()
+        storage.add_project_bookmark("Test", "Epic:1000")
+        storage.set_default_project("Epic:1000")
+
+        mock_client.get_project_by_number = AsyncMock(return_value=Project(
+            oid="Epic:1000",
+            number="E-1000",
+            name="Test Project",
+        ))
+        mock_client.get_delivery_groups = AsyncMock(return_value=[
+            DeliveryGroup(
+                oid="Epic:100",
+                number="E-100",
+                name="Q1 Release",
+            ),
+        ])
+        mock_client.get_features = AsyncMock(return_value=[])
+
+        with patch("v1cli.cli.V1Client", return_value=mock_client):
+            result = runner.invoke(cli, ["tree", "--depth", "deliveries"])
+
+        assert result.exit_code == 0
+        assert "E-100" in result.output
+        # Features should not be fetched when depth is deliveries
+        mock_client.get_stories.assert_not_called()
+
+    def test_tree_no_items(
+        self, runner: CliRunner, mock_storage: Path, mock_client: MagicMock
+    ) -> None:
+        """tree shows message when no items."""
+        from v1cli.storage.local import LocalStorage
+        storage = LocalStorage()
+        storage.add_project_bookmark("Empty", "Epic:1000")
+        storage.set_default_project("Epic:1000")
+
+        mock_client.get_project_by_number = AsyncMock(return_value=Project(
+            oid="Epic:1000",
+            number="E-1000",
+            name="Empty Project",
+        ))
+        mock_client.get_delivery_groups = AsyncMock(return_value=[])
+        mock_client.get_features = AsyncMock(return_value=[])
+
+        with patch("v1cli.cli.V1Client", return_value=mock_client):
+            result = runner.invoke(cli, ["tree"])
+
+        assert result.exit_code == 0
+        assert "No items found" in result.output
+
+    def test_tree_no_default_project(
+        self, runner: CliRunner, mock_storage: Path, mock_client: MagicMock
+    ) -> None:
+        """tree errors without default project."""
+        with patch("v1cli.cli.V1Client", return_value=mock_client):
+            result = runner.invoke(cli, ["tree"])
+
+        assert result.exit_code == 1
+        assert "No project specified" in result.output

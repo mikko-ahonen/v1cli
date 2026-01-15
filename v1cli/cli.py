@@ -8,6 +8,7 @@ from typing import Any
 import click
 from rich.console import Console
 from rich.table import Table
+from rich.tree import Tree
 
 from v1cli.api.client import V1APIError, V1Client
 from v1cli.config.auth import AuthError
@@ -849,6 +850,109 @@ def task_done(identifier: str) -> None:
             console.print(f"[green]Marked task as done:[/green] {display} - {task.name}")
 
     run_async(_done())
+
+
+# =============================================================================
+# Tree Command
+# =============================================================================
+
+
+@cli.command()
+@click.option("--project", "-p", "project_id", help="Project # (1-99), V1 number (E-nnn), or OID")
+@click.option("--depth", "-d", type=click.Choice(["deliveries", "features", "stories", "tasks"]), default="stories", help="Tree depth")
+@click.option("--all", "-a", "include_done", is_flag=True, help="Include closed items")
+@handle_errors
+def tree(project_id: str | None, depth: str, include_done: bool) -> None:
+    """Show project hierarchy as a tree.
+
+    Displays the full structure: Project → Delivery Groups → Features → Stories → Tasks
+    """
+
+    async def _tree() -> None:
+        async with V1Client() as client:
+            project_oid = await _resolve_project_oid_async(project_id, client)
+            if not project_oid:
+                return
+
+            # Get project name for the root
+            project = await client.get_project_by_number(project_oid)
+            project_name = project.name if project else project_oid
+
+            # Create tree root
+            root = Tree(f"[bold cyan]{project_name}[/bold cyan]")
+
+            # Get delivery groups
+            deliveries = await client.get_delivery_groups(project_oid, include_done=include_done)
+
+            # Also get features directly under the project (not under a delivery group)
+            direct_features = await client.get_features(project_oid, include_done=include_done)
+
+            if not deliveries and not direct_features:
+                console.print(f"[yellow]No items found under project.[/yellow]")
+                return
+
+            # Add delivery groups
+            for dg in deliveries:
+                dg_label = f"[bold magenta]{dg.number}[/bold magenta] {dg.name}"
+                if dg.status:
+                    dg_label += f" [dim]({dg.status})[/dim]"
+                dg_branch = root.add(dg_label)
+
+                if depth in ["features", "stories", "tasks"]:
+                    # Get features under this delivery group
+                    features = await client.get_features(dg.oid, include_done=include_done)
+                    await _add_features_to_tree(dg_branch, features, depth, include_done, client)
+
+            # Add features directly under project (not under a delivery group)
+            if direct_features:
+                await _add_features_to_tree(root, direct_features, depth, include_done, client)
+
+            console.print(root)
+
+    async def _add_features_to_tree(
+        parent_branch: Tree,
+        features: list[Any],
+        depth: str,
+        include_done: bool,
+        client: V1Client,
+    ) -> None:
+        """Add features and their children to the tree."""
+        for feature in features:
+            f_label = f"[cyan]{feature.number}[/cyan] {feature.name}"
+            if feature.status:
+                f_label += f" [dim]({feature.status})[/dim]"
+            f_branch = parent_branch.add(f_label)
+
+            if depth in ["stories", "tasks"]:
+                # Get stories under this feature
+                stories = await client.get_stories(feature.oid, include_done=include_done)
+                for story in stories:
+                    settings = get_settings()
+                    status_enum = None
+                    if story.status_oid:
+                        status_enum = settings.status_mapping.get_status(story.status_oid)
+
+                    icon = STATUS_ICONS.get(status_enum, "○") if status_enum else "○"
+                    color = STATUS_COLORS.get(status_enum, "white") if status_enum else "white"
+
+                    s_label = f"[green]{story.number}[/green] {story.name}"
+                    s_label += f" [{color}]{icon}[/{color}]"
+                    if story.estimate:
+                        s_label += f" [dim]{int(story.estimate)}pts[/dim]"
+
+                    s_branch = f_branch.add(s_label)
+
+                    if depth == "tasks":
+                        # Get tasks under this story
+                        tasks = await client.get_tasks(story.oid)
+                        for task in tasks:
+                            done_marker = "[green]✓[/green]" if task.is_done else "[ ]"
+                            t_label = f"{done_marker} {task.name}"
+                            if task.number:
+                                t_label = f"[dim]{task.number}[/dim] {t_label}"
+                            s_branch.add(t_label)
+
+    run_async(_tree())
 
 
 # =============================================================================
