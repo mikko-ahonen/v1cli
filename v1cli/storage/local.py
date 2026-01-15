@@ -73,3 +73,23 @@ class LocalStorage:
     def get_bookmarked_project_oids(self) -> list[str]:
         """Get all bookmarked project OIDs."""
         return [b.oid for b in self.settings.bookmarks]
+
+    def cache_features(self, features: list[tuple[str, str]]) -> None:
+        """Cache the last features list (number, oid pairs)."""
+        import json
+        cache_file = self._config_dir / "features_cache.json"
+        cache_file.write_text(json.dumps(features))
+
+    def get_cached_feature(self, index: int) -> tuple[str, str] | None:
+        """Get a cached feature by 1-based index. Returns (number, oid) or None."""
+        import json
+        cache_file = self._config_dir / "features_cache.json"
+        if not cache_file.exists():
+            return None
+        try:
+            features = json.loads(cache_file.read_text())
+            if 1 <= index <= len(features):
+                return tuple(features[index - 1])
+        except (json.JSONDecodeError, IndexError):
+            pass
+        return None

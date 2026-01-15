@@ -602,6 +602,7 @@ def stories(parent_number: str | None, project_id: str | None, include_done: boo
     Examples:
         v1 stories              # All stories under default project
         v1 stories -p 1         # All stories under project #1
+        v1 stories 3            # Stories under feature #3 from last 'v1 features'
         v1 stories E-123        # Stories under feature E-123
         v1 stories S-456        # Sub-stories under story S-456
     """
@@ -610,8 +611,23 @@ def stories(parent_number: str | None, project_id: str | None, include_done: boo
         async with V1Client() as client:
             # If a specific parent is given, use that
             if parent_number:
-                # Try as Feature first (E-xxx or Epic:xxx)
-                if parent_number.upper().startswith("E-") or (
+                # Check if it's a row number from cached features list
+                if parent_number.isdigit():
+                    cached = storage.get_cached_feature(int(parent_number))
+                    if cached:
+                        feature_number, feature_oid = cached
+                        parent = await client.get_feature_by_number(feature_number)
+                        if parent:
+                            parent_oid = parent.oid
+                            parent_display = f"{parent.number}: {parent.name}"
+                        else:
+                            console.print(f"[red]Cached feature not found:[/red] {feature_number}")
+                            raise SystemExit(1)
+                    else:
+                        console.print(f"[red]No cached feature at row {parent_number}. Run 'v1 features' first.[/red]")
+                        raise SystemExit(1)
+                # Try as Feature (E-xxx or Epic:xxx)
+                elif parent_number.upper().startswith("E-") or (
                     ":" in parent_number and parent_number.split(":")[0].lower() == "epic"
                 ):
                     parent = await client.get_feature_by_number(parent_number)
@@ -870,14 +886,19 @@ def features(parent_id: str | None, include_done: bool) -> None:
                 console.print("[yellow]No features found.[/yellow]")
                 return
 
+            # Cache features for later reference by row number
+            storage.cache_features([(f.number, f.oid) for f in feature_list])
+
             table = Table(title="Features")
+            table.add_column("#", style="dim", justify="right")
             table.add_column("Number", style="cyan")
             table.add_column("Name")
             table.add_column("Status")
             table.add_column("Parent", style="dim")
 
-            for feature in feature_list:
+            for idx, feature in enumerate(feature_list, 1):
                 table.add_row(
+                    str(idx),
                     feature.number,
                     feature.name[:50] + ("..." if len(feature.name) > 50 else ""),
                     feature.status or "-",
