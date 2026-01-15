@@ -259,21 +259,23 @@ def projects_list() -> None:
     default_oid = storage.get_default_project_oid()
 
     table = Table(title="Bookmarked Projects")
-    table.add_column("Number", style="cyan", no_wrap=True)
+    table.add_column("#", style="bold yellow", no_wrap=True, justify="right")
+    table.add_column("V1 Number", style="cyan", no_wrap=True)
     table.add_column("Name")
     table.add_column("Default", style="green", no_wrap=True)
 
-    for bookmark in bookmarks:
-        # Extract number from OID (e.g., "Epic:1234" -> "E-1234")
-        number = ""
+    for idx, bookmark in enumerate(bookmarks, start=1):
+        # Extract V1 number from OID (e.g., "Epic:1234" -> "E-1234")
+        v1_number = ""
         if ":" in bookmark.oid:
             num = bookmark.oid.split(":")[-1]
-            number = f"E-{num}"
+            v1_number = f"E-{num}"
         is_default = "★" if bookmark.oid == default_oid else ""
-        table.add_row(number, bookmark.name, is_default)
+        table.add_row(str(idx), v1_number, bookmark.name, is_default)
 
     console.print(table)
     console.print(f"\n[dim]Total: {len(bookmarks)} bookmarks[/dim]")
+    console.print("[dim]Use project # (1, 2, ...) as shorthand in commands[/dim]")
 
 
 @projects_group.command(name="all")
@@ -289,7 +291,10 @@ def projects_all(output_file: str | None, output_format: str) -> None:
 @click.argument("identifier")
 @handle_errors
 def projects_add(identifier: str) -> None:
-    """Bookmark a project by number (E-nnnnn) or OID."""
+    """Bookmark a project.
+
+    IDENTIFIER can be: V1 number (E-nnnnn), OID (Epic:nnnnn), or name.
+    """
 
     async def _add() -> None:
         async with V1Client() as client:
@@ -319,7 +324,10 @@ def projects_add(identifier: str) -> None:
 @click.argument("identifier")
 @handle_errors
 def projects_rm(identifier: str) -> None:
-    """Remove a project bookmark by number (E-nnnnn) or OID."""
+    """Remove a project bookmark.
+
+    IDENTIFIER can be: project # (1-99), V1 number (E-nnnnn), or OID (Epic:nnnnn).
+    """
     result = storage.remove_project_bookmark(identifier)
     if result:
         name, oid = result
@@ -332,7 +340,10 @@ def projects_rm(identifier: str) -> None:
 @click.argument("identifier")
 @handle_errors
 def projects_default(identifier: str) -> None:
-    """Set the default project by name or number (E-xxx)."""
+    """Set the default project.
+
+    IDENTIFIER can be: project # (1-99), V1 number (E-nnnnn), or OID (Epic:nnnnn).
+    """
 
     async def _default() -> None:
         settings = get_settings()
@@ -564,7 +575,7 @@ def take(number: str) -> None:
 
 
 @cli.command()
-@click.option("--project", "-p", "project_name", help="Project name or number")
+@click.option("--project", "-p", "project_name", help="Project # (1-99), V1 number (E-nnn), or name")
 @click.option("--all", "-a", "include_done", is_flag=True, help="Include closed delivery groups")
 @click.option("--output", "-o", "output_file", type=click.Path(), help="Write output to file")
 @click.option("--format", "-f", "output_format", type=click.Choice(["table", "csv", "json"]), default="table", help="Output format")
@@ -627,7 +638,7 @@ def roadmap(project_name: str | None, include_done: bool, output_file: str | Non
 
 
 @cli.command()
-@click.option("--parent", "-p", "parent_id", help="Parent (Delivery Group or Project) E-nnnnn")
+@click.option("--parent", "-p", "parent_id", help="Parent: project # (1-99), V1 number (E-nnn), or OID")
 @click.option("--all", "-a", "include_done", is_flag=True, help="Include closed features")
 @handle_errors
 def features(parent_id: str | None, include_done: bool) -> None:
@@ -672,7 +683,7 @@ def feature_group() -> None:
 
 @feature_group.command(name="create")
 @click.argument("name")
-@click.option("--parent", "-p", "parent_id", help="Parent (Delivery Group or Project) E-nnnnn")
+@click.option("--parent", "-p", "parent_id", help="Parent: project # (1-99), V1 number (E-nnn), or OID")
 @click.option("--description", "-d", "description", default="", help="Feature description")
 @handle_errors
 def feature_create(name: str, parent_id: str | None, description: str) -> None:
@@ -706,7 +717,7 @@ def story_group(ctx: click.Context) -> None:
 
 @story_group.command(name="create")
 @click.argument("name")
-@click.option("--project", "-p", "project_name", help="Project name or number")
+@click.option("--project", "-p", "project_name", help="Project # (1-99), V1 number (E-nnn), or name")
 @click.option("--feature", "-e", "feature_number", help="Parent feature number (e.g., E-100)")
 @click.option("--estimate", "-s", type=float, help="Story points estimate")
 @click.option("--description", "-d", "description", default="", help="Story description")
@@ -868,7 +879,7 @@ def _is_oid_token(identifier: str) -> bool:
     return parts[0].isalpha() and parts[1].isdigit()
 
 
-async def _resolve_project_oid_async(project_identifier: str | None, client: V1Client) -> str | None:
+async def _resolve_project_oid_async(project_identifier: str | None, client: V1Client) -> str:
     """Resolve a project OID from name, number, OID token, or default."""
     if project_identifier:
         # Check if it's already an OID token
@@ -896,7 +907,7 @@ async def _resolve_project_oid_async(project_identifier: str | None, client: V1C
 
         console.print(f"[red]Project not found:[/red] {project_identifier}")
         console.print("Use 'v1 projects add <number>' to bookmark a project.")
-        return None
+        raise SystemExit(1)
 
     default_oid = storage.get_default_project_oid()
     if default_oid:
@@ -904,10 +915,10 @@ async def _resolve_project_oid_async(project_identifier: str | None, client: V1C
 
     console.print("[red]No project specified and no default set.[/red]")
     console.print("Use --project/-p or set a default with 'v1 projects default <number>'")
-    return None
+    raise SystemExit(1)
 
 
-def _resolve_project_oid(project_identifier: str | None) -> str | None:
+def _resolve_project_oid(project_identifier: str | None) -> str:
     """Resolve a project OID from name, number, OID token, or default (sync, bookmarks only)."""
     if project_identifier:
         # Check if it's already an OID token
@@ -920,7 +931,7 @@ def _resolve_project_oid(project_identifier: str | None) -> str | None:
             return bookmark.oid
         console.print(f"[red]Project bookmark not found:[/red] {project_identifier}")
         console.print("Use 'v1 projects add <number>' to bookmark a project.")
-        return None
+        raise SystemExit(1)
 
     default_oid = storage.get_default_project_oid()
     if default_oid:
@@ -928,7 +939,7 @@ def _resolve_project_oid(project_identifier: str | None) -> str | None:
 
     console.print("[red]No project specified and no default set.[/red]")
     console.print("Use --project/-p or set a default with 'v1 projects default <number>'")
-    return None
+    raise SystemExit(1)
 
 
 def _print_stories_table(stories: list[Any], title: str = "Stories") -> None:

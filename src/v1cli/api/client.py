@@ -204,20 +204,20 @@ class V1Client:
 
     async def get_stories(
         self,
-        epic_oid: str,
+        parent_oid: str,
         include_done: bool = False,
     ) -> list[Story]:
-        """Get stories under an epic (Story asset).
+        """Get stories under a parent (Feature or Story).
 
         Args:
-            epic_oid: The parent Epic OID (Story:xxx)
+            parent_oid: The parent OID (Feature or Story)
             include_done: Include completed stories
 
         Returns:
             List of child stories
         """
-        # Stories whose parent is this epic
-        filters = [f"Super='{epic_oid}'"]
+        # Stories whose parent is the given feature/story
+        filters = [f"Super='{parent_oid}'"]
         if not include_done:
             filters.append("AssetState!='Closed'")
 

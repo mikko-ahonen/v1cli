@@ -57,12 +57,28 @@ class Settings(BaseModel):
     status_mapping: StatusMapping = Field(default_factory=StatusMapping)
 
     def get_bookmark(self, identifier: str) -> ProjectBookmark | None:
-        """Find a bookmark by name, number, or OID (case-insensitive).
+        """Find a bookmark by name, project number, V1 number, or OID.
 
         Args:
-            identifier: Project name, number (e.g., "E-1234"), or OID (e.g., "Epic:1234")
+            identifier: One of:
+                - Project number (1-99): Simple index into bookmarks list
+                - V1 number (e.g., "E-1234"): VersionOne display number
+                - OID (e.g., "Epic:1234"): VersionOne internal identifier
+                - Name: Project name (case-insensitive)
         """
         identifier_lower = identifier.lower()
+
+        # Check if it's a simple project number (1-99) - index into bookmarks
+        if identifier.isdigit():
+            proj_num = int(identifier)
+            if 1 <= proj_num <= 99 and proj_num <= len(self.bookmarks):
+                return self.bookmarks[proj_num - 1]
+            # If number > 99, try to match as V1 number against OID
+            num = identifier.lstrip("0") or "0"
+            for bookmark in self.bookmarks:
+                oid_num = bookmark.oid.split(":")[-1] if ":" in bookmark.oid else ""
+                if oid_num == num:
+                    return bookmark
 
         # Check if it's an OID token (e.g., "Epic:1234", "Story:5678")
         if ":" in identifier and identifier.split(":")[0].isalpha():
@@ -71,14 +87,8 @@ class Settings(BaseModel):
                     return bookmark
             return None
 
-        # Check if it looks like a number (E-xxx or just digits)
-        is_number = (
-            identifier_lower.startswith("e-") or
-            identifier.replace("-", "").isdigit()
-        )
-
-        if is_number:
-            # Extract numeric part
+        # Check if it looks like a V1 number (E-xxx)
+        if identifier_lower.startswith("e-"):
             num = identifier_lower.replace("e-", "").lstrip("0") or "0"
             for bookmark in self.bookmarks:
                 # OID format is "Epic:1234"

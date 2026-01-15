@@ -45,7 +45,7 @@ class StoryDetailScreen(Screen):
             Static(""),
             Static(f"Project: {self.story.scope_name}", classes="label"),
             Static(
-                f"Epic: {self.story.parent_name or 'None'}", classes="label"
+                f"Feature: {self.story.parent_name or 'None'}", classes="label"
             ) if self.story.parent_name else Static(""),
             Static(f"Owners: {', '.join(self.story.owners) or 'None'}", classes="label"),
             Static(

@@ -45,8 +45,8 @@ class Story(BaseModel):
     scope_oid: str = Field(default="", description="Project OID")
     owners: list[str] = Field(default_factory=list, description="Owner names")
     owner_oids: list[str] = Field(default_factory=list, description="Owner OIDs")
-    parent_name: str | None = Field(default=None, description="Epic name")
-    parent_oid: str | None = Field(default=None, description="Epic OID")
+    parent_name: str | None = Field(default=None, description="Parent (Feature) name")
+    parent_oid: str | None = Field(default=None, description="Parent (Feature) OID")
     estimate: float | None = Field(default=None, description="Story points estimate")
 
     @property
