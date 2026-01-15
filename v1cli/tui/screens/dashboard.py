@@ -61,11 +61,11 @@ class DashboardScreen(Screen):
         table.clear()
 
         try:
-            project_oids = self.storage.get_bookmarked_project_oids() or None
-
+            # Note: project filtering removed - bookmarked Epics can't be used
+            # as Scope filters. Stories are filtered by owner only.
             async with V1Client() as client:
                 self.stories = await client.get_my_stories(
-                    project_oids=project_oids,
+                    project_oids=None,
                     include_done=False,
                 )
 

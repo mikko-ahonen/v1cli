@@ -574,11 +574,11 @@ def mine(include_done: bool, output_format: str) -> None:
     """List stories assigned to me."""
 
     async def _mine() -> None:
-        project_oids = storage.get_bookmarked_project_oids() or None
-
         async with V1Client() as client:
+            # Note: project filtering removed - bookmarked Epics can't be used
+            # as Scope filters. Stories are filtered by owner only.
             stories = await client.get_my_stories(
-                project_oids=project_oids,
+                project_oids=None,
                 include_done=include_done,
             )
 
