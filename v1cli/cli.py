@@ -591,40 +591,75 @@ def mine(include_done: bool) -> None:
 
 
 @cli.command()
-@click.argument("parent_number")
+@click.argument("parent_number", required=False)
+@click.option("--project", "-p", "project_id", help="Project # (1-99), V1 number (E-nnn), or OID")
 @click.option("--all", "-a", "include_done", is_flag=True, help="Include completed stories")
 @handle_errors
-def stories(parent_number: str, include_done: bool) -> None:
-    """List stories under a feature (E-nnnnn) or story (S-nnnnn)."""
+def stories(parent_number: str | None, project_id: str | None, include_done: bool) -> None:
+    """List stories under a feature, story, or entire project.
+
+    \b
+    Examples:
+        v1 stories              # All stories under default project
+        v1 stories -p 1         # All stories under project #1
+        v1 stories E-123        # Stories under feature E-123
+        v1 stories S-456        # Sub-stories under story S-456
+    """
 
     async def _stories() -> None:
         async with V1Client() as client:
-            # Try as Feature first (E-xxx or Epic:xxx)
-            if parent_number.upper().startswith("E-") or (
-                ":" in parent_number and parent_number.split(":")[0].lower() == "epic"
-            ):
-                parent = await client.get_feature_by_number(parent_number)
-                if not parent:
-                    console.print(f"[red]Feature not found:[/red] {parent_number}")
-                    raise SystemExit(1)
-                parent_oid = parent.oid
-                parent_display = f"{parent.number}: {parent.name}"
+            # If a specific parent is given, use that
+            if parent_number:
+                # Try as Feature first (E-xxx or Epic:xxx)
+                if parent_number.upper().startswith("E-") or (
+                    ":" in parent_number and parent_number.split(":")[0].lower() == "epic"
+                ):
+                    parent = await client.get_feature_by_number(parent_number)
+                    if not parent:
+                        console.print(f"[red]Feature not found:[/red] {parent_number}")
+                        raise SystemExit(1)
+                    parent_oid = parent.oid
+                    parent_display = f"{parent.number}: {parent.name}"
+                else:
+                    # Try as Story (S-xxx or Story:xxx)
+                    parent = await client.get_story_by_number(parent_number)
+                    if not parent:
+                        console.print(f"[red]Story not found:[/red] {parent_number}")
+                        raise SystemExit(1)
+                    parent_oid = parent.oid
+                    parent_display = f"{parent.number}: {parent.name}"
+
+                story_list = await client.get_stories(parent_oid, include_done=include_done)
+
+                if not story_list:
+                    console.print(f"[yellow]No stories under {parent_display}[/yellow]")
+                    return
+
+                _print_stories_table(story_list, title=f"Stories under {parent_display}")
             else:
-                # Try as Story (S-xxx or Story:xxx)
-                parent = await client.get_story_by_number(parent_number)
-                if not parent:
-                    console.print(f"[red]Story not found:[/red] {parent_number}")
-                    raise SystemExit(1)
-                parent_oid = parent.oid
-                parent_display = f"{parent.number}: {parent.name}"
+                # No parent given - get all stories under the project
+                project_oid = await _resolve_project_oid_async(project_id, client)
+                if not project_oid:
+                    return
 
-            story_list = await client.get_stories(parent_oid, include_done=include_done)
+                # Collect all features (direct + under delivery groups)
+                all_features = await client.get_features(project_oid, include_done=include_done)
+                delivery_groups = await client.get_delivery_groups(project_oid, include_done=include_done)
+                for dg in delivery_groups:
+                    dg_features = await client.get_features(dg.oid, include_done=include_done)
+                    all_features.extend(dg_features)
 
-            if not story_list:
-                console.print(f"[yellow]No stories under {parent_display}[/yellow]")
-                return
+                # Get stories under all features
+                story_list: list[Any] = []
+                for feature in all_features:
+                    feature_stories = await client.get_stories(feature.oid, include_done=include_done)
+                    story_list.extend(feature_stories)
 
-            _print_stories_table(story_list, title=f"Stories under {parent_display}")
+                if not story_list:
+                    console.print("[yellow]No stories found.[/yellow]")
+                    return
+
+                _print_stories_table(story_list, title="All Stories")
 
     run_async(_stories())
 
