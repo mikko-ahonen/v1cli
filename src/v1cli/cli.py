@@ -166,8 +166,8 @@ def _list_projects(show_all: bool, output_file: str | None, output_format: str) 
                 bookmarks = storage.settings.bookmarks
                 if not bookmarks:
                     console.print("[yellow]No bookmarked projects.[/yellow]")
-                    console.print("[dim]Use 'v1 bookmarks add <number>' to bookmark a project.[/dim]")
-                    console.print("[dim]Use 'v1 projects list -a' to list all projects.[/dim]")
+                    console.print("[dim]Use 'v1 projects add <number>' to bookmark a project.[/dim]")
+                    console.print("[dim]Use 'v1 projects all' to list all projects.[/dim]")
                     return
 
                 # Fetch details for bookmarked projects
@@ -240,20 +240,20 @@ def _list_projects(show_all: bool, output_file: str | None, output_format: str) 
     run_async(_projects())
 
 
-@cli.group(name="bookmarks")
-def bookmarks_group() -> None:
-    """Manage project bookmarks."""
+@cli.group(name="projects")
+def projects_group() -> None:
+    """List and manage projects."""
     pass
 
 
-@bookmarks_group.command(name="list")
+@projects_group.command(name="list")
 @handle_errors
-def bookmarks_list() -> None:
-    """List all bookmarked projects."""
+def projects_list() -> None:
+    """List bookmarked projects."""
     bookmarks = storage.settings.bookmarks
     if not bookmarks:
         console.print("[yellow]No bookmarked projects.[/yellow]")
-        console.print("[dim]Use 'v1 bookmarks add <number>' to bookmark a project.[/dim]")
+        console.print("[dim]Use 'v1 projects add <number>' to bookmark a project.[/dim]")
         return
 
     default_oid = storage.get_default_project_oid()
@@ -276,18 +276,28 @@ def bookmarks_list() -> None:
     console.print(f"\n[dim]Total: {len(bookmarks)} bookmarks[/dim]")
 
 
-@bookmarks_group.command(name="add")
+@projects_group.command(name="all")
+@click.option("--output", "-o", "output_file", type=click.Path(), help="Write output to file")
+@click.option("--format", "-f", "output_format", type=click.Choice(["table", "csv", "json"]), default="table", help="Output format")
+@handle_errors
+def projects_all(output_file: str | None, output_format: str) -> None:
+    """List all projects (from API)."""
+    _list_projects(show_all=True, output_file=output_file, output_format=output_format)
+
+
+@projects_group.command(name="add")
 @click.argument("identifier")
 @handle_errors
-def bookmark_add(identifier: str) -> None:
-    """Bookmark a project by name or number (E-xxx)."""
+def projects_add(identifier: str) -> None:
+    """Bookmark a project by number (E-nnnnn) or OID."""
 
     async def _add() -> None:
         async with V1Client() as client:
-            # Check if identifier looks like a number (E-xxx or just digits)
+            # Check if identifier looks like a number or OID
             is_number = (
                 identifier.upper().startswith("E-") or
-                identifier.replace("-", "").isdigit()
+                identifier.replace("-", "").isdigit() or
+                _is_oid_token(identifier)
             )
 
             if is_number:
@@ -305,33 +315,17 @@ def bookmark_add(identifier: str) -> None:
     run_async(_add())
 
 
-@bookmarks_group.command(name="delete")
+@projects_group.command(name="rm")
 @click.argument("identifier")
 @handle_errors
-def bookmark_delete(identifier: str) -> None:
-    """Remove a project bookmark by name or number (E-xxx)."""
+def projects_rm(identifier: str) -> None:
+    """Remove a project bookmark by number (E-nnnnn) or OID."""
     result = storage.remove_project_bookmark(identifier)
     if result:
         name, oid = result
         console.print(f"[green]Removed bookmark:[/green] {name} ({oid})")
     else:
         console.print(f"[yellow]Bookmark not found:[/yellow] {identifier}")
-
-
-@cli.group(name="projects")
-def projects_group() -> None:
-    """List and manage projects."""
-    pass
-
-
-@projects_group.command(name="list")
-@click.option("--all", "-a", "show_all", is_flag=True, help="Show all projects (default: bookmarked only)")
-@click.option("--output", "-o", "output_file", type=click.Path(), help="Write output to file")
-@click.option("--format", "-f", "output_format", type=click.Choice(["table", "csv", "json"]), default="table", help="Output format")
-@handle_errors
-def projects_list(show_all: bool, output_file: str | None, output_format: str) -> None:
-    """List projects (bookmarked by default, all with -a)."""
-    _list_projects(show_all, output_file, output_format)
 
 
 @projects_group.command(name="default")
@@ -366,7 +360,7 @@ def projects_default(identifier: str) -> None:
                     return
 
         console.print(f"[red]Project not found:[/red] {identifier}")
-        console.print("[dim]Use 'v1 bookmarks add <number>' to bookmark a project first.[/dim]")
+        console.print("[dim]Use 'v1 projects add <number>' to bookmark a project first.[/dim]")
         raise SystemExit(1)
 
     run_async(_default())
@@ -402,26 +396,40 @@ def mine(include_done: bool) -> None:
 
 
 @cli.command()
-@click.argument("epic_number")
+@click.argument("parent_number")
 @click.option("--all", "-a", "include_done", is_flag=True, help="Include completed stories")
 @handle_errors
-def stories(epic_number: str, include_done: bool) -> None:
-    """List stories under an epic (S-xxx)."""
+def stories(parent_number: str, include_done: bool) -> None:
+    """List stories under a feature (E-nnnnn) or story (S-nnnnn)."""
 
     async def _stories() -> None:
         async with V1Client() as client:
-            epic = await client.get_epic_by_number(epic_number)
-            if not epic:
-                console.print(f"[red]Epic not found:[/red] {epic_number}")
-                raise SystemExit(1)
+            # Try as Feature first (E-xxx or Epic:xxx)
+            if parent_number.upper().startswith("E-") or (
+                ":" in parent_number and parent_number.split(":")[0].lower() == "epic"
+            ):
+                parent = await client.get_feature_by_number(parent_number)
+                if not parent:
+                    console.print(f"[red]Feature not found:[/red] {parent_number}")
+                    raise SystemExit(1)
+                parent_oid = parent.oid
+                parent_display = f"{parent.number}: {parent.name}"
+            else:
+                # Try as Story (S-xxx or Story:xxx)
+                parent = await client.get_story_by_number(parent_number)
+                if not parent:
+                    console.print(f"[red]Story not found:[/red] {parent_number}")
+                    raise SystemExit(1)
+                parent_oid = parent.oid
+                parent_display = f"{parent.number}: {parent.name}"
 
-            story_list = await client.get_stories(epic.oid, include_done=include_done)
+            story_list = await client.get_stories(parent_oid, include_done=include_done)
 
             if not story_list:
-                console.print(f"[yellow]No stories under {epic.number}[/yellow]")
+                console.print(f"[yellow]No stories under {parent_display}[/yellow]")
                 return
 
-            _print_stories_table(story_list, title=f"Stories under {epic.number}: {epic.name}")
+            _print_stories_table(story_list, title=f"Stories under {parent_display}")
 
     run_async(_stories())
 
@@ -452,7 +460,7 @@ def story(number: str) -> None:
             console.print()
             console.print(f"[dim]Project:[/dim] {s.scope_name}")
             if s.parent_name:
-                console.print(f"[dim]Epic:[/dim] {s.parent_name}")
+                console.print(f"[dim]Feature:[/dim] {s.parent_name}")
             console.print(f"[dim]Owners:[/dim] {', '.join(s.owners) or 'None'}")
             if s.estimate:
                 console.print(f"[dim]Estimate:[/dim] {s.estimate} pts")
@@ -551,7 +559,7 @@ def take(number: str) -> None:
 
 
 # =============================================================================
-# Epic Commands
+# Feature Commands
 # =============================================================================
 
 
@@ -578,20 +586,38 @@ def roadmap(project_name: str | None, include_done: bool, output_file: str | Non
 
             # Handle file output
             if output_file:
-                _write_projects_to_file(deliveries, output_file, output_format)
+                _write_deliveries_to_file(deliveries, output_file, output_format)
                 console.print(f"[green]Wrote {len(deliveries)} delivery groups to {output_file}[/green]")
                 return
 
             table = Table(title="Roadmap (Delivery Groups)")
-            table.add_column("Number", style="cyan")
+            table.add_column("Number", style="cyan", no_wrap=True)
             table.add_column("Name")
+            table.add_column("Type", style="dim")
             table.add_column("Status")
+            table.add_column("Begin", no_wrap=True)
+            table.add_column("End", no_wrap=True)
+            table.add_column("Progress", justify="right")
+            table.add_column("Pts", justify="right")
 
             for d in deliveries:
+                # Format dates (remove time portion if present)
+                begin = (d.planned_start or "")[:10] if d.planned_start else "-"
+                end = (d.planned_end or "")[:10] if d.planned_end else "-"
+                # Format progress as percentage
+                progress = f"{int(d.progress * 100)}%" if d.progress is not None else "-"
+                # Format estimate
+                estimate = str(int(d.estimate)) if d.estimate is not None else "-"
+
                 table.add_row(
                     d.number,
-                    d.name[:60] + ("..." if len(d.name) > 60 else ""),
+                    d.name[:40] + ("..." if len(d.name) > 40 else ""),
+                    d.delivery_type or "-",
                     d.status or "-",
+                    begin,
+                    end,
+                    progress,
+                    estimate,
                 )
 
             console.print(table)
@@ -601,65 +627,65 @@ def roadmap(project_name: str | None, include_done: bool, output_file: str | Non
 
 
 @cli.command()
-@click.option("--project", "-p", "project_name", help="Project name or number")
-@click.option("--all", "-a", "include_done", is_flag=True, help="Include closed epics")
+@click.option("--parent", "-p", "parent_id", help="Parent (Delivery Group or Project) E-nnnnn")
+@click.option("--all", "-a", "include_done", is_flag=True, help="Include closed features")
 @handle_errors
-def epics(project_name: str | None, include_done: bool) -> None:
-    """List epics in a project."""
+def features(parent_id: str | None, include_done: bool) -> None:
+    """List features under a Delivery Group or Project."""
 
-    async def _epics() -> None:
+    async def _features() -> None:
         async with V1Client() as client:
-            project_oid = await _resolve_project_oid_async(project_name, client)
-            if not project_oid:
+            parent_oid = await _resolve_project_oid_async(parent_id, client)
+            if not parent_oid:
                 return
 
-            epic_list = await client.get_epics(project_oid, include_done=include_done)
+            feature_list = await client.get_features(parent_oid, include_done=include_done)
 
-            if not epic_list:
-                console.print("[yellow]No epics found.[/yellow]")
+            if not feature_list:
+                console.print("[yellow]No features found.[/yellow]")
                 return
 
-            table = Table(title="Epics")
+            table = Table(title="Features")
             table.add_column("Number", style="cyan")
             table.add_column("Name")
             table.add_column("Status")
             table.add_column("Project", style="dim")
 
-            for epic in epic_list:
+            for feature in feature_list:
                 table.add_row(
-                    epic.number,
-                    epic.name[:50] + ("..." if len(epic.name) > 50 else ""),
-                    epic.status or "-",
-                    epic.scope_name,
+                    feature.number,
+                    feature.name[:50] + ("..." if len(feature.name) > 50 else ""),
+                    feature.status or "-",
+                    feature.scope_name,
                 )
 
             console.print(table)
 
-    run_async(_epics())
+    run_async(_features())
 
 
-@cli.group(name="epic")
-def epic_group() -> None:
-    """Manage epics."""
+@cli.group(name="feature")
+def feature_group() -> None:
+    """Manage features."""
     pass
 
 
-@epic_group.command(name="create")
+@feature_group.command(name="create")
 @click.argument("name")
-@click.option("--project", "-p", "project_name", help="Project name or number")
-@click.option("--description", "-d", "description", default="", help="Epic description")
+@click.option("--parent", "-p", "parent_id", help="Parent (Delivery Group or Project) E-nnnnn")
+@click.option("--description", "-d", "description", default="", help="Feature description")
 @handle_errors
-def epic_create(name: str, project_name: str | None, description: str) -> None:
-    """Create a new epic."""
+def feature_create(name: str, parent_id: str | None, description: str) -> None:
+    """Create a new feature."""
 
     async def _create() -> None:
         async with V1Client() as client:
-            project_oid = await _resolve_project_oid_async(project_name, client)
-            if not project_oid:
+            parent_oid = await _resolve_project_oid_async(parent_id, client)
+            if not parent_oid:
                 return
 
-            oid = await client.create_epic(name, project_oid, description)
-            console.print(f"[green]Created epic:[/green] {oid}")
+            oid = await client.create_feature(name, parent_oid, description)
+            console.print(f"[green]Created feature:[/green] {oid}")
             console.print(f"  Name: {name}")
 
     run_async(_create())
@@ -681,14 +707,14 @@ def story_group(ctx: click.Context) -> None:
 @story_group.command(name="create")
 @click.argument("name")
 @click.option("--project", "-p", "project_name", help="Project name or number")
-@click.option("--epic", "-e", "epic_number", help="Parent epic number (e.g., E-100)")
+@click.option("--feature", "-e", "feature_number", help="Parent feature number (e.g., E-100)")
 @click.option("--estimate", "-s", type=float, help="Story points estimate")
 @click.option("--description", "-d", "description", default="", help="Story description")
 @handle_errors
 def story_create(
     name: str,
     project_name: str | None,
-    epic_number: str | None,
+    feature_number: str | None,
     estimate: float | None,
     description: str,
 ) -> None:
@@ -700,25 +726,25 @@ def story_create(
             if not project_oid:
                 return
 
-            epic_oid = None
-            if epic_number:
-                epic = await client.get_epic_by_number(epic_number)
-                if not epic:
-                    console.print(f"[red]Epic not found:[/red] {epic_number}")
+            feature_oid = None
+            if feature_number:
+                feature = await client.get_feature_by_number(feature_number)
+                if not feature:
+                    console.print(f"[red]Feature not found:[/red] {feature_number}")
                     raise SystemExit(1)
-                epic_oid = epic.oid
+                feature_oid = feature.oid
 
             oid = await client.create_story(
                 name=name,
                 project_oid=project_oid,
-                epic_oid=epic_oid,
+                feature_oid=feature_oid,
                 estimate=estimate,
                 description=description,
             )
             console.print(f"[green]Created story:[/green] {oid}")
             console.print(f"  Name: {name}")
-            if epic_number:
-                console.print(f"  Epic: {epic_number}")
+            if feature_number:
+                console.print(f"  Feature: {feature_number}")
             if estimate:
                 console.print(f"  Estimate: {estimate} pts")
 
@@ -734,7 +760,7 @@ def story_create(
 @click.argument("story_number")
 @handle_errors
 def tasks(story_number: str) -> None:
-    """List tasks for a story."""
+    """List tasks for a story (S-nnnnn or Story:nnnnn)."""
 
     async def _tasks() -> None:
         async with V1Client() as client:
@@ -757,8 +783,8 @@ def tasks(story_number: str) -> None:
                 if task.todo is not None or task.done is not None:
                     hours = f" [dim]({task.done or 0}h done, {task.todo or 0}h todo)[/dim]"
                 owners = f" [dim]({', '.join(task.owners)})[/dim]" if task.owners else ""
-                console.print(f"  {done_marker} {task.name}{hours}{owners}")
-                console.print(f"      [dim]{task.oid}[/dim]")
+                task_num = f"[cyan]{task.number}[/cyan] " if task.number else ""
+                console.print(f"  {done_marker} {task_num}{task.name}{hours}{owners}")
 
     run_async(_tasks())
 
@@ -795,15 +821,21 @@ def task_create(story_number: str, name: str, estimate: float | None) -> None:
 
 
 @task_group.command(name="done")
-@click.argument("task_oid")
+@click.argument("identifier")
 @handle_errors
-def task_done(task_oid: str) -> None:
-    """Mark a task as done."""
+def task_done(identifier: str) -> None:
+    """Mark a task as done (TK-nnnnn or Task:nnnnn)."""
 
     async def _done() -> None:
         async with V1Client() as client:
-            await client.complete_task(task_oid)
-            console.print(f"[green]Marked task as done:[/green] {task_oid}")
+            task = await client.get_task_by_identifier(identifier)
+            if not task:
+                console.print(f"[red]Task not found:[/red] {identifier}")
+                raise SystemExit(1)
+
+            await client.complete_task(task.oid)
+            display = task.number or task.oid
+            console.print(f"[green]Marked task as done:[/green] {display} - {task.name}")
 
     run_async(_done())
 
@@ -828,12 +860,24 @@ def tui() -> None:
 # =============================================================================
 
 
+def _is_oid_token(identifier: str) -> bool:
+    """Check if identifier is an OID token (e.g., 'Epic:1234', 'Story:5678')."""
+    if ":" not in identifier:
+        return False
+    parts = identifier.split(":", 1)
+    return parts[0].isalpha() and parts[1].isdigit()
+
+
 async def _resolve_project_oid_async(project_identifier: str | None, client: V1Client) -> str | None:
-    """Resolve a project OID from name, number, or default."""
+    """Resolve a project OID from name, number, OID token, or default."""
     if project_identifier:
+        # Check if it's already an OID token
+        if _is_oid_token(project_identifier):
+            return project_identifier
+
         settings = get_settings()
 
-        # First check bookmarks by name
+        # Check bookmarks by name, number, or OID
         bookmark = settings.get_bookmark(project_identifier)
         if bookmark:
             return bookmark.oid
@@ -851,7 +895,7 @@ async def _resolve_project_oid_async(project_identifier: str | None, client: V1C
                 return project.oid
 
         console.print(f"[red]Project not found:[/red] {project_identifier}")
-        console.print("Use 'v1 bookmarks add <number>' to bookmark a project.")
+        console.print("Use 'v1 projects add <number>' to bookmark a project.")
         return None
 
     default_oid = storage.get_default_project_oid()
@@ -864,14 +908,18 @@ async def _resolve_project_oid_async(project_identifier: str | None, client: V1C
 
 
 def _resolve_project_oid(project_identifier: str | None) -> str | None:
-    """Resolve a project OID from name, number, or default (sync, bookmarks only)."""
+    """Resolve a project OID from name, number, OID token, or default (sync, bookmarks only)."""
     if project_identifier:
+        # Check if it's already an OID token
+        if _is_oid_token(project_identifier):
+            return project_identifier
+
         settings = get_settings()
         bookmark = settings.get_bookmark(project_identifier)
         if bookmark:
             return bookmark.oid
         console.print(f"[red]Project bookmark not found:[/red] {project_identifier}")
-        console.print("Use 'v1 bookmarks add <number>' to bookmark a project.")
+        console.print("Use 'v1 projects add <number>' to bookmark a project.")
         return None
 
     default_oid = storage.get_default_project_oid()
@@ -953,6 +1001,55 @@ def _write_projects_to_file(projects: list[Any], filepath: str, fmt: str) -> Non
         lines = ["Number\tName\tCategory\tParent"]
         for p in projects:
             lines.append(f"{p.number}\t{p.name}\t{p.category or '-'}\t{p.parent_name or '-'}")
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+
+
+def _write_deliveries_to_file(deliveries: list[Any], filepath: str, fmt: str) -> None:
+    """Write delivery groups to a file in the specified format."""
+    if fmt == "json":
+        data = [
+            {
+                "oid": d.oid,
+                "number": d.number,
+                "name": d.name,
+                "type": d.delivery_type,
+                "status": d.status,
+                "planned_start": d.planned_start,
+                "planned_end": d.planned_end,
+                "progress": d.progress,
+                "estimate": d.estimate,
+            }
+            for d in deliveries
+        ]
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+    elif fmt == "csv":
+        with open(filepath, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["OID", "Number", "Name", "Type", "Status", "PlannedStart", "PlannedEnd", "Progress", "Estimate"])
+            for d in deliveries:
+                writer.writerow([
+                    d.oid,
+                    d.number,
+                    d.name,
+                    d.delivery_type or "",
+                    d.status or "",
+                    d.planned_start or "",
+                    d.planned_end or "",
+                    d.progress or "",
+                    d.estimate or "",
+                ])
+
+    else:  # table format as plain text
+        lines = ["Number\tName\tType\tStatus\tBegin\tEnd\tProgress\tEstimate"]
+        for d in deliveries:
+            begin = (d.planned_start or "")[:10] if d.planned_start else "-"
+            end = (d.planned_end or "")[:10] if d.planned_end else "-"
+            progress = f"{int(d.progress * 100)}%" if d.progress is not None else "-"
+            estimate = str(int(d.estimate)) if d.estimate is not None else "-"
+            lines.append(f"{d.number}\t{d.name}\t{d.delivery_type or '-'}\t{d.status or '-'}\t{begin}\t{end}\t{progress}\t{estimate}")
         with open(filepath, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
 

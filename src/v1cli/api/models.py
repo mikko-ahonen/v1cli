@@ -55,16 +55,16 @@ class Story(BaseModel):
         return self.status or "None"
 
 
-class Epic(BaseModel):
-    """A VersionOne epic (Story under Business Epic)."""
+class Feature(BaseModel):
+    """A VersionOne feature (Epic with Type='Feature' under Delivery Group)."""
 
-    oid: str = Field(description="Unique identifier, e.g., 'Story:100'")
-    number: str = Field(description="Display number, e.g., 'S-100'")
-    name: str = Field(description="Epic title")
-    description: str | None = Field(default=None, description="Epic description")
+    oid: str = Field(description="Unique identifier, e.g., 'Epic:100'")
+    number: str = Field(description="Display number, e.g., 'E-100'")
+    name: str = Field(description="Feature title")
+    description: str | None = Field(default=None, description="Feature description")
     scope_name: str = Field(default="", description="Scope name")
     scope_oid: str = Field(default="", description="Scope OID")
-    parent_name: str | None = Field(default=None, description="Business Epic name")
+    parent_name: str | None = Field(default=None, description="Parent name")
     status: str | None = Field(default=None, description="Status name")
     status_oid: str | None = Field(default=None, description="Status OID")
 
@@ -73,6 +73,7 @@ class Task(BaseModel):
     """A VersionOne task (sub-item of a story)."""
 
     oid: str = Field(description="Unique identifier, e.g., 'Task:5678'")
+    number: str = Field(default="", description="Display number, e.g., 'TK-5678'")
     name: str = Field(description="Task title")
     parent_oid: str = Field(description="Parent story OID")
     parent_number: str = Field(default="", description="Parent story number")
@@ -86,6 +87,20 @@ class Task(BaseModel):
     def is_done(self) -> bool:
         """Check if task is completed."""
         return self.status is not None and self.status.lower() in ("done", "completed")
+
+
+class DeliveryGroup(BaseModel):
+    """A VersionOne Delivery Group (roadmap/release item)."""
+
+    oid: str = Field(description="Unique identifier, e.g., 'Epic:1234'")
+    name: str = Field(description="Name")
+    number: str = Field(default="", description="Display number, e.g., 'E-100'")
+    status: str | None = Field(default=None, description="Status name")
+    delivery_type: str | None = Field(default=None, description="Delivery type name")
+    planned_start: str | None = Field(default=None, description="Planned begin date")
+    planned_end: str | None = Field(default=None, description="Planned end date")
+    progress: float | None = Field(default=None, description="Progress percentage (0-1)")
+    estimate: float | None = Field(default=None, description="Estimate points")
 
 
 class StatusInfo(BaseModel):

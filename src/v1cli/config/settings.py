@@ -57,12 +57,19 @@ class Settings(BaseModel):
     status_mapping: StatusMapping = Field(default_factory=StatusMapping)
 
     def get_bookmark(self, identifier: str) -> ProjectBookmark | None:
-        """Find a bookmark by name or number (case-insensitive).
+        """Find a bookmark by name, number, or OID (case-insensitive).
 
         Args:
-            identifier: Project name or number (e.g., "E-1234" or "1234")
+            identifier: Project name, number (e.g., "E-1234"), or OID (e.g., "Epic:1234")
         """
         identifier_lower = identifier.lower()
+
+        # Check if it's an OID token (e.g., "Epic:1234", "Story:5678")
+        if ":" in identifier and identifier.split(":")[0].isalpha():
+            for bookmark in self.bookmarks:
+                if bookmark.oid.lower() == identifier_lower:
+                    return bookmark
+            return None
 
         # Check if it looks like a number (E-xxx or just digits)
         is_number = (

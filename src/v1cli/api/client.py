@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from v1cli.api.models import Epic, Member, Project, StatusInfo, Story, Task
+from v1cli.api.models import DeliveryGroup, Feature, Member, Project, StatusInfo, Story, Task
 from v1cli.config.auth import get_auth_token, get_v1_url, get_verify_ssl
 
 
@@ -298,30 +298,39 @@ class V1Client:
 
         return stories
 
-    async def get_story_by_number(self, number: str) -> Story | None:
-        """Get a story by its display number (e.g., S-12345)."""
-        # Normalize number format
-        if not number.upper().startswith("S-"):
-            number = f"S-{number}"
+    async def get_story_by_number(self, identifier: str) -> Story | None:
+        """Get a story by its display number (e.g., S-12345) or OID (e.g., Story:12345)."""
+        select = [
+            "Number",
+            "Name",
+            "Description",
+            "Status.Name",
+            "Status",
+            "Scope.Name",
+            "Scope",
+            "Owners.Name",
+            "Owners",
+            "Super.Name",
+            "Super",
+            "Estimate",
+        ]
 
-        results = await self._query(
-            "Story",
-            select=[
-                "Number",
-                "Name",
-                "Description",
-                "Status.Name",
-                "Status",
-                "Scope.Name",
-                "Scope",
-                "Owners.Name",
-                "Owners",
-                "Super.Name",
-                "Super",
-                "Estimate",
-            ],
-            where={"Number": number},
-        )
+        # Check if it's an OID token
+        if ":" in identifier and identifier.split(":")[0].lower() == "story":
+            results = await self._query(
+                "Story",
+                select=select,
+                filter_=[f"ID='{identifier}'"],
+            )
+        else:
+            # Normalize number format
+            if not identifier.upper().startswith("S-"):
+                identifier = f"S-{identifier}"
+            results = await self._query(
+                "Story",
+                select=select,
+                where={"Number": identifier},
+            )
 
         if not results:
             return None
@@ -455,7 +464,7 @@ class V1Client:
         self,
         project_oid: str,
         include_done: bool = False,
-    ) -> list[Project]:
+    ) -> list[DeliveryGroup]:
         """Get Delivery Groups under a project (roadmap/release items).
 
         Args:
@@ -471,21 +480,31 @@ class V1Client:
 
         results = await self._query(
             "Epic",
-            select=["Name", "Description", "Number", "Category.Name", "Scope.Name", "Super.Name", "Status.Name"],
+            select=[
+                "Name",
+                "Number",
+                "Status.Name",
+                "Type.Name",
+                "PlannedStart",
+                "PlannedEnd",
+                "PercentDone",
+                "Estimate",
+            ],
             filter_=filters,
-            sort=["Name"],
+            sort=["PlannedStart", "Name"],
         )
 
         return [
-            Project(
+            DeliveryGroup(
                 oid=item["_oid"],
                 name=item.get("Name", ""),
-                description=item.get("Description", ""),
                 number=item.get("Number", ""),
-                category=item.get("Category.Name"),
-                scope_name=item.get("Scope.Name", ""),
-                parent_name=item.get("Super.Name"),
                 status=item.get("Status.Name"),
+                delivery_type=item.get("Type.Name"),
+                planned_start=item.get("PlannedStart"),
+                planned_end=item.get("PlannedEnd"),
+                progress=item.get("PercentDone"),
+                estimate=item.get("Estimate"),
             )
             for item in results
         ]
@@ -499,16 +518,25 @@ class V1Client:
                 return project
         return None
 
-    async def get_project_by_number(self, number: str) -> Project | None:
-        """Find a project (Business Epic) by number (e.g., E-100)."""
-        if not number.upper().startswith("E-"):
-            number = f"E-{number}"
+    async def get_project_by_number(self, identifier: str) -> Project | None:
+        """Find a project (Business Epic) by number (e.g., E-100) or OID (e.g., Epic:100)."""
+        select = ["Name", "Description", "Number", "Category.Name", "Scope.Name", "Super.Name", "Status.Name"]
 
-        results = await self._query(
-            "Epic",
-            select=["Name", "Description", "Number", "Category.Name", "Scope.Name", "Super.Name", "Status.Name"],
-            where={"Number": number},
-        )
+        # Check if it's an OID token
+        if ":" in identifier and identifier.split(":")[0].lower() == "epic":
+            results = await self._query(
+                "Epic",
+                select=select,
+                filter_=[f"ID='{identifier}'"],
+            )
+        else:
+            if not identifier.upper().startswith("E-"):
+                identifier = f"E-{identifier}"
+            results = await self._query(
+                "Epic",
+                select=select,
+                where={"Number": identifier},
+            )
 
         if not results:
             return None
@@ -525,36 +553,34 @@ class V1Client:
             status=item.get("Status.Name"),
         )
 
-    async def get_epics(
+    async def get_features(
         self,
-        project_oid: str,
+        parent_oid: str,
         include_done: bool = False,
-    ) -> list[Epic]:
-        """Get epics (Stories) under a Business Epic (project).
+    ) -> list[Feature]:
+        """Get features under a parent (Delivery Group or Business Epic).
 
-        In this V1 configuration, "Epics" are actually Story objects
-        that are direct children of Business Epics.
+        Features are Epic assets with Type='Feature'.
 
         Args:
-            project_oid: The Business Epic OID (parent)
-            include_done: Include closed epics
+            parent_oid: The parent OID (Delivery Group or Business Epic)
+            include_done: Include closed features
 
         Returns:
-            List of child epics (Stories under Business Epic)
+            List of child features
         """
-        # Query Stories whose parent (Super) is the Business Epic
-        filters = [f"Super='{project_oid}'"]
+        filters = [f"Super='{parent_oid}'", "Type.Name='Feature'"]
         if not include_done:
             filters.append("AssetState!='Closed'")
 
         results = await self._query(
-            "Story",
+            "Epic",
             select=["Number", "Name", "Description", "Status.Name", "Status", "Scope.Name", "Scope", "Super.Name"],
             filter_=filters,
             sort=["-ChangeDateUTC"],
         )
 
-        epics = []
+        features = []
         for item in results:
             status_data = item.get("Status")
             status_oid = None
@@ -566,8 +592,8 @@ class V1Client:
             if isinstance(scope_data, dict):
                 scope_oid = scope_data.get("_oid", "")
 
-            epics.append(
-                Epic(
+            features.append(
+                Feature(
                     oid=item["_oid"],
                     number=item.get("Number", ""),
                     name=item.get("Name", ""),
@@ -580,40 +606,35 @@ class V1Client:
                 )
             )
 
-        return epics
+        return features
 
-    async def create_epic(
+    async def create_feature(
         self,
         name: str,
-        project_oid: str,
-        scope_oid: str | None = None,
+        parent_oid: str,
         description: str = "",
     ) -> str:
-        """Create a new epic (Story) under a Business Epic (project).
-
-        In this V1 configuration, "Epics" are Story objects under Business Epics.
+        """Create a new feature (Epic with Type='Feature') under a parent.
 
         Args:
-            name: Epic name
-            project_oid: Business Epic OID (parent)
-            scope_oid: Scope OID (if needed, otherwise inherited)
+            name: Feature name
+            parent_oid: Parent OID (Delivery Group or Business Epic)
             description: Optional description
 
         Returns:
-            The created epic's OID
+            The created feature's OID
         """
-        data: dict[str, Any] = {"Name": name, "Super": project_oid}
-        if scope_oid:
-            data["Scope"] = scope_oid
+        data: dict[str, Any] = {"Name": name, "Super": parent_oid}
         if description:
             data["Description"] = description
-        return await self._create("Story", data)
+        # Note: Type may need to be set explicitly if not inherited
+        return await self._create("Epic", data)
 
     async def create_story(
         self,
         name: str,
         project_oid: str,
-        epic_oid: str | None = None,
+        feature_oid: str | None = None,
         estimate: float | None = None,
         description: str = "",
     ) -> str:
@@ -622,7 +643,7 @@ class V1Client:
         Args:
             name: Story name
             project_oid: Project OID
-            epic_oid: Optional parent epic OID
+            feature_oid: Optional parent feature OID
             estimate: Optional story points
             description: Optional description
 
@@ -630,8 +651,8 @@ class V1Client:
             The created story's OID
         """
         data: dict[str, Any] = {"Name": name, "Scope": project_oid}
-        if epic_oid:
-            data["Super"] = epic_oid
+        if feature_oid:
+            data["Super"] = feature_oid
         if estimate is not None:
             data["Estimate"] = estimate
         if description:
@@ -649,11 +670,15 @@ class V1Client:
         """
         results = await self._query(
             "Task",
-            select=["Name", "Parent", "Parent.Number", "Status.Name", "Status", "Owners.Name", "ToDo", "Actuals"],
+            select=["Number", "Name", "Parent", "Parent.Number", "Status.Name", "Status", "Owners.Name", "ToDo", "Actuals"],
             filter_=[f"Parent='{story_oid}'"],
             sort=["Order"],
         )
 
+        return self._parse_tasks(results)
+
+    def _parse_tasks(self, results: list[dict[str, Any]]) -> list[Task]:
+        """Parse task results into Task objects."""
         tasks = []
         for item in results:
             parent_data = item.get("Parent")
@@ -675,6 +700,7 @@ class V1Client:
             tasks.append(
                 Task(
                     oid=item["_oid"],
+                    number=item.get("Number", ""),
                     name=item.get("Name", ""),
                     parent_oid=parent_oid,
                     parent_number=item.get("Parent.Number", ""),
@@ -687,6 +713,33 @@ class V1Client:
             )
 
         return tasks
+
+    async def get_task_by_identifier(self, identifier: str) -> Task | None:
+        """Get a task by its number (TK-nnnnn) or OID (Task:nnnnn)."""
+        select = ["Number", "Name", "Parent", "Parent.Number", "Status.Name", "Status", "Owners.Name", "ToDo", "Actuals"]
+
+        # Check if it's an OID token
+        if ":" in identifier and identifier.split(":")[0].lower() == "task":
+            results = await self._query(
+                "Task",
+                select=select,
+                filter_=[f"ID='{identifier}'"],
+            )
+        else:
+            # Normalize number format
+            if not identifier.upper().startswith("TK-"):
+                identifier = f"TK-{identifier}"
+            results = await self._query(
+                "Task",
+                select=select,
+                where={"Number": identifier},
+            )
+
+        if not results:
+            return None
+
+        tasks = self._parse_tasks(results)
+        return tasks[0] if tasks else None
 
     async def create_task(
         self,
@@ -734,19 +787,28 @@ class V1Client:
             for item in results
         ]
 
-    async def get_epic_by_number(self, number: str) -> Epic | None:
-        """Get an epic (Story) by its display number (e.g., S-100).
+    async def get_feature_by_number(self, identifier: str) -> Feature | None:
+        """Get a feature by its display number (e.g., E-100) or OID (e.g., Epic:100).
 
-        In this V1 configuration, "Epics" are Story objects under Business Epics.
+        Features are Epic assets with Type='Feature'.
         """
-        if not number.upper().startswith("S-"):
-            number = f"S-{number}"
+        select = ["Number", "Name", "Description", "Status.Name", "Status", "Scope.Name", "Scope", "Super.Name", "Type.Name"]
 
-        results = await self._query(
-            "Story",
-            select=["Number", "Name", "Description", "Status.Name", "Status", "Scope.Name", "Scope", "Super.Name"],
-            where={"Number": number},
-        )
+        # Check if it's an OID token
+        if ":" in identifier and identifier.split(":")[0].lower() == "epic":
+            results = await self._query(
+                "Epic",
+                select=select,
+                filter_=[f"ID='{identifier}'"],
+            )
+        else:
+            if not identifier.upper().startswith("E-"):
+                identifier = f"E-{identifier}"
+            results = await self._query(
+                "Epic",
+                select=select,
+                where={"Number": identifier},
+            )
 
         if not results:
             return None
@@ -762,7 +824,7 @@ class V1Client:
         if isinstance(scope_data, dict):
             scope_oid = scope_data.get("_oid", "")
 
-        return Epic(
+        return Feature(
             oid=item["_oid"],
             number=item.get("Number", ""),
             name=item.get("Name", ""),
