@@ -38,7 +38,7 @@ dev = [
 v1 = "v1cli.cli:cli"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/v1cli"]
+packages = ["v1cli"]
 
 [tool.ruff]
 line-length = 100
