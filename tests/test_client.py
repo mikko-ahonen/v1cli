@@ -501,7 +501,6 @@ class TestV1ClientDeliveryGroups:
                     "Status.Name": "In Progress",
                     "PlannedStart": "2024-01-01",
                     "PlannedEnd": "2024-03-31",
-                    "Estimate": 100.0,
                 },
             ]],
         )
@@ -516,7 +515,7 @@ class TestV1ClientDeliveryGroups:
         assert groups[0].planned_start == "2024-01-01"
         assert groups[0].planned_end == "2024-03-31"
         assert groups[0].progress is None  # PercentDone not available in all V1 instances
-        assert groups[0].estimate == 100.0
+        assert groups[0].estimate is None  # Estimate not available in all V1 instances
 
 
 class TestV1ClientStatuses:

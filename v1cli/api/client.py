@@ -486,7 +486,6 @@ class V1Client:
                 "Status.Name",
                 "PlannedStart",
                 "PlannedEnd",
-                "Estimate",
             ],
             filter_=filters,
             sort=["PlannedStart", "Name"],
@@ -502,7 +501,7 @@ class V1Client:
                 planned_start=item.get("PlannedStart"),
                 planned_end=item.get("PlannedEnd"),
                 progress=None,  # PercentDone not available in all V1 instances
-                estimate=item.get("Estimate"),
+                estimate=None,  # Estimate not available in all V1 instances
             )
             for item in results
         ]
