@@ -582,6 +582,7 @@ class V1Client:
                 "Status.Name",
                 "PlannedStart",
                 "PlannedEnd",
+                "Category.Name",
             ],
             filter_=filters,
             sort=["PlannedStart", "Name"],
@@ -598,6 +599,7 @@ class V1Client:
                 planned_end=item.get("PlannedEnd"),
                 progress=None,  # PercentDone not available in all V1 instances
                 estimate=None,  # Estimate not available in all V1 instances
+                category=item.get("Category.Name"),
             )
             for item in results
         ]
@@ -669,7 +671,7 @@ class V1Client:
 
         results = await self._query(
             "Epic",
-            select=["Number", "Name", "Description", "Status.Name", "Status", "Scope.Name", "Scope", "Super.Name"],
+            select=["Number", "Name", "Description", "Status.Name", "Status", "Scope.Name", "Scope", "Super.Name", "Category.Name"],
             filter_=filters,
             sort=["-ChangeDateUTC"],
         )
@@ -697,6 +699,7 @@ class V1Client:
                     parent_name=item.get("Super.Name"),
                     status=item.get("Status.Name"),
                     status_oid=status_oid,
+                    category=item.get("Category.Name"),
                 )
             )
 

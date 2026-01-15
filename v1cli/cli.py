@@ -1067,7 +1067,8 @@ def tree(project_id: str | None, depth: str, include_done: bool, show_types: boo
             for dg in deliveries:
                 dg_label = f"[bold magenta]{dg.number}[/bold magenta] {dg.name}"
                 if show_types:
-                    dg_label = f"[dim]Epic:[/dim] {dg_label}"
+                    category_info = f" ({dg.category})" if dg.category else ""
+                    dg_label = f"[dim]Epic{category_info}:[/dim] {dg_label}"
                 if dg.status:
                     dg_label += f" [dim]({dg.status})[/dim]"
                 dg_branch = root.add(dg_label)
@@ -1095,7 +1096,8 @@ def tree(project_id: str | None, depth: str, include_done: bool, show_types: boo
         for feature in features:
             f_label = f"[cyan]{feature.number}[/cyan] {feature.name}"
             if show_types:
-                f_label = f"[dim]Epic:[/dim] {f_label}"
+                category_info = f" ({feature.category})" if feature.category else ""
+                f_label = f"[dim]Epic{category_info}:[/dim] {f_label}"
             if feature.status:
                 f_label += f" [dim]({feature.status})[/dim]"
             f_branch = parent_branch.add(f_label)

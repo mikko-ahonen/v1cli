@@ -67,6 +67,7 @@ class Feature(BaseModel):
     parent_name: str | None = Field(default=None, description="Parent name")
     status: str | None = Field(default=None, description="Status name")
     status_oid: str | None = Field(default=None, description="Status OID")
+    category: str | None = Field(default=None, description="Category name (e.g., Feature)")
 
 
 class Task(BaseModel):
@@ -101,6 +102,7 @@ class DeliveryGroup(BaseModel):
     planned_end: str | None = Field(default=None, description="Planned end date")
     progress: float | None = Field(default=None, description="Progress percentage (0-1)")
     estimate: float | None = Field(default=None, description="Estimate points")
+    category: str | None = Field(default=None, description="Category name (e.g., Delivery Group)")
 
 
 class StatusInfo(BaseModel):
