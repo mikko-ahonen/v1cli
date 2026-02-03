@@ -419,8 +419,9 @@ class V1Client:
                 filter_=[f"ID='{identifier}'"],
             )
         else:
-            # Normalize number format
-            if not identifier.upper().startswith("S-"):
+            # Normalize number format (ensure S- prefix and uppercase)
+            identifier = identifier.upper()
+            if not identifier.startswith("S-"):
                 identifier = f"S-{identifier}"
             results = await self._query(
                 "Story",
