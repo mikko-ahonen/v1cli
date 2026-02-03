@@ -119,6 +119,7 @@ class TimeEntry(BaseModel):
     hours: float = Field(description="Hours logged")
     description: str = Field(description="Required description of work done")
     remaining: float | None = Field(default=None, description="Estimated hours remaining")
+    date: str = Field(description="Date of work (ISO format YYYY-MM-DD)")
     story_oid: str = Field(description="Story OID to log time against")
     story_number: str = Field(default="", description="Story display number")
     project_oid: str = Field(default="", description="Project OID")

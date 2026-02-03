@@ -3,6 +3,7 @@
 import asyncio
 import csv
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 import click
@@ -1593,53 +1594,88 @@ def parse_duration(duration_str: str) -> float | None:
         return None
 
 
-@cli.group(name="track", invoke_without_command=True)
-@click.argument("duration", required=False)
-@click.argument("description", required=False)
-@click.option("--story", "-s", "story_number", help="Story number (defaults to current story)")
-@click.option("--remaining", "-r", "remaining", help="Estimated hours remaining (e.g., 4h, 2.5h)")
-@click.pass_context
-@handle_errors
-def track_group(
-    ctx: click.Context,
-    duration: str | None,
-    description: str | None,
-    story_number: str | None,
-    remaining: str | None,
-) -> None:
+def parse_date(date_str: str) -> str | None:
+    """Parse date string to ISO format date.
+
+    Supports: today, yesterday, N days ago, YYYY-MM-DD
+    Returns ISO date string or None if parsing fails.
+    """
+    from datetime import timedelta
+    import re
+
+    date_str = date_str.strip().lower()
+    today = datetime.now(timezone.utc).date()
+
+    if date_str == "today":
+        return today.isoformat()
+    if date_str == "yesterday":
+        return (today - timedelta(days=1)).isoformat()
+
+    # N days ago
+    match = re.match(r"(\d+)\s*days?\s*ago", date_str)
+    if match:
+        days = int(match.group(1))
+        return (today - timedelta(days=days)).isoformat()
+
+    # ISO format YYYY-MM-DD
+    try:
+        parsed = datetime.strptime(date_str, "%Y-%m-%d").date()
+        return parsed.isoformat()
+    except ValueError:
+        pass
+
+    return None
+
+
+@cli.group(name="track")
+def track_group() -> None:
     """Track time against stories.
 
-    Log time with: v1 track <duration> "<description>"
+    Commands:
 
-    Duration formats: 5h, 2.5h, 30m, 1h30m, 1:30
+        v1 track add 2h "description"   - Log time
+
+        v1 track list                   - Show unsynced entries
+
+        v1 track story S-12345          - Set current story
+
+        v1 track move 1 S-67890         - Move entry to different story
+
+        v1 track delete 1               - Delete an entry
+
+        v1 track sync                   - Push entries to VersionOne
+    """
+    pass
+
+
+@track_group.command(name="add")
+@click.argument("duration")
+@click.argument("description")
+@click.option("--story", "-s", "story_number", help="Story number (defaults to current story)")
+@click.option("--remaining", "-r", "remaining", help="Estimated hours remaining (e.g., 4h)")
+@click.option("--date", "-d", "date_str", default="today", help="Date: today, yesterday, '2 days ago', YYYY-MM-DD")
+@handle_errors
+def track_add(
+    duration: str,
+    description: str,
+    story_number: str | None,
+    remaining: str | None,
+    date_str: str,
+) -> None:
+    """Log time to current or specified story.
+
+    DURATION formats: 5h, 2.5h, 30m, 1h30m, 1:30
 
     Examples:
 
-        v1 track 2h "Implemented login feature"
+        v1 track add 2h "Implemented login feature"
 
-        v1 track 30m "Code review" -s S-12345
+        v1 track add 30m "Code review" -s S-12345
 
-        v1 track 2h "Feature work" -r 4h   # 4h remaining
+        v1 track add 2h "Feature work" -r 4h
+
+        v1 track add 3h "Yesterday's work" --date yesterday
     """
-    if ctx.invoked_subcommand is not None:
-        return
-
-    # Default command: log time
-    if not duration:
-        console.print("[yellow]Usage:[/yellow] v1 track <duration> \"<description>\"")
-        console.print("\nOr use a subcommand:")
-        console.print("  v1 track list    - Show unsynced entries")
-        console.print("  v1 track story   - Set/show current story")
-        console.print("  v1 track move    - Move entry to different story")
-        console.print("  v1 track delete  - Delete an entry")
-        console.print("  v1 track sync    - Push entries to VersionOne")
-        return
-
-    if not description:
-        console.print("[red]Description is required.[/red]")
-        console.print("Usage: v1 track <duration> \"<description>\"")
-        raise SystemExit(1)
-
     hours = parse_duration(duration)
     if hours is None or hours <= 0:
         console.print(f"[red]Invalid duration:[/red] {duration}")
@@ -1654,6 +1690,13 @@ def track_group(
             console.print(f"[red]Invalid remaining duration:[/red] {remaining}")
             console.print("Examples: 4h, 2.5h, 30m")
             raise SystemExit(1)
+
+    # Parse date
+    entry_date = parse_date(date_str)
+    if entry_date is None:
+        console.print(f"[red]Invalid date:[/red] {date_str}")
+        console.print("Examples: today, yesterday, '2 days ago', 2024-01-15")
+        raise SystemExit(1)
 
     # Resolve story
     async def _add_entry() -> None:
@@ -1685,15 +1728,17 @@ def track_group(
             raise SystemExit(1)
 
         project_oid = storage.get_default_project_oid() or ""
-        entry = storage.add_time_entry(
+        storage.add_time_entry(
             hours=hours,  # type: ignore
-            description=description,  # type: ignore
+            description=description,
             story_oid=story_oid,
             story_number=story_num,
             project_oid=project_oid,
             remaining=remaining_hours,
+            date=entry_date,
         )
-        console.print(f"[green]Logged {hours:.1f}h to {story_num}[/green]")
+        date_info = "" if date_str == "today" else f" [dim]({entry_date})[/dim]"
+        console.print(f"[green]Logged {hours:.1f}h to {story_num}[/green]{date_info}")
         if remaining_hours is not None:
             console.print(f"  {description} [dim]({remaining_hours:.1f}h remaining)[/dim]")
         else:
@@ -1728,11 +1773,11 @@ def track_list(show_all: bool, output_format: str) -> None:
     # Table format
     table = Table(show_header=True, header_style="bold")
     table.add_column("#", style="dim", width=3)
+    table.add_column("Date", width=10)
     table.add_column("Hours", justify="right", width=6)
     table.add_column("Left", justify="right", width=6)
     table.add_column("Story", width=10)
     table.add_column("Description")
-    table.add_column("Created", width=16)
     if show_all:
         table.add_column("Status", width=8)
 
@@ -1740,8 +1785,8 @@ def track_list(show_all: bool, output_format: str) -> None:
     for i, entry in enumerate(entries, 1):
         hours_str = f"{entry.hours:.1f}h"
         remaining_str = f"{entry.remaining:.1f}h" if entry.remaining is not None else "-"
-        created = entry.created_at[:16].replace("T", " ")
-        row = [str(i), hours_str, remaining_str, entry.story_number, entry.description, created]
+        entry_date = getattr(entry, "date", entry.created_at[:10])  # Fallback for old entries
+        row = [str(i), entry_date, hours_str, remaining_str, entry.story_number, entry.description]
         if show_all:
             status = "[green]synced[/green]" if entry.synced else "[yellow]pending[/yellow]"
             row.append(status)
@@ -1911,8 +1956,10 @@ def track_sync(dry_run: bool) -> None:
     if dry_run:
         console.print("[bold]Would sync the following entries:[/bold]\n")
         for entry in entries:
+            entry_date = getattr(entry, "date", "")
+            date_info = f" [{entry_date}]" if entry_date else ""
             remaining_info = f" ({entry.remaining:.1f}h left)" if entry.remaining is not None else ""
-            console.print(f"  {entry.story_number}: {entry.hours:.1f}h{remaining_info} - {entry.description}")
+            console.print(f"  {entry.story_number}{date_info}: {entry.hours:.1f}h{remaining_info} - {entry.description}")
         console.print(f"\n[dim]Total: {sum(e.hours for e in entries):.1f}h[/dim]")
         return
 
@@ -1926,15 +1973,18 @@ def track_sync(dry_run: bool) -> None:
             success_count = 0
             for entry in entries:
                 try:
+                    entry_date = getattr(entry, "date", None)
                     actual_oid = await client.create_actual(
                         workitem_oid=entry.story_oid,
                         hours=entry.hours,
                         description=entry.description,
                         member_oid=member_oid,
+                        date=entry_date,
                     )
                     storage.mark_entry_synced(entry.id, actual_oid)
+                    date_info = f" [{entry_date}]" if entry_date else ""
                     remaining_info = f" ({entry.remaining:.1f}h left)" if entry.remaining is not None else ""
-                    console.print(f"  [green]✓[/green] {entry.story_number}: {entry.hours:.1f}h{remaining_info} - {entry.description}")
+                    console.print(f"  [green]✓[/green] {entry.story_number}{date_info}: {entry.hours:.1f}h{remaining_info} - {entry.description}")
                     success_count += 1
                 except V1APIError as e:
                     console.print(f"  [red]✗[/red] {entry.story_number}: {entry.hours:.1f}h - {e}")

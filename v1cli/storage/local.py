@@ -148,14 +148,17 @@ class LocalStorage:
         story_number: str,
         project_oid: str = "",
         remaining: float | None = None,
+        date: str | None = None,
     ) -> TimeEntry:
         """Add a new time entry and return it."""
         entries = self.load_time_entries()
+        entry_date = date or datetime.now(timezone.utc).date().isoformat()
         entry = TimeEntry(
             id=str(uuid4()),
             hours=hours,
             description=description,
             remaining=remaining,
+            date=entry_date,
             story_oid=story_oid,
             story_number=story_number,
             project_oid=project_oid,
