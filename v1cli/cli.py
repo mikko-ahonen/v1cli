@@ -1827,12 +1827,6 @@ def track_story(story_number: str | None) -> None:
             console.print("Use 'v1 track story <number>' to set one.")
         return
 
-    # Reject OID format - only accept story numbers
-    if ":" in story_number:
-        console.print(f"[red]Invalid format:[/red] {story_number}")
-        console.print("Use story number (S-12345) or row number from 'v1 stories'.")
-        raise SystemExit(1)
-
     async def _set_story() -> None:
         story_oid: str | None = None
         story_num: str | None = None
