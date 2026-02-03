@@ -1547,5 +1547,402 @@ def _write_deliveries_to_file(deliveries: list[Any], filepath: str, fmt: str) ->
             f.write("\n".join(lines))
 
 
+# =============================================================================
+# Time Tracking Commands
+# =============================================================================
+
+
+def parse_duration(duration_str: str) -> float | None:
+    """Parse duration string to hours.
+
+    Supports: 5h, 2.5h, 30m, 1h30m, 1:30
+    Returns None if parsing fails.
+    """
+    import re
+
+    duration_str = duration_str.strip().lower()
+
+    # Format: 1:30 (hours:minutes)
+    if ":" in duration_str:
+        parts = duration_str.split(":")
+        if len(parts) == 2:
+            try:
+                hours = int(parts[0])
+                minutes = int(parts[1])
+                return hours + minutes / 60.0
+            except ValueError:
+                return None
+
+    # Format: 1h30m or 1h or 30m
+    h_match = re.search(r"(\d+(?:\.\d+)?)\s*h", duration_str)
+    m_match = re.search(r"(\d+(?:\.\d+)?)\s*m", duration_str)
+
+    hours = 0.0
+    if h_match:
+        hours = float(h_match.group(1))
+    if m_match:
+        hours += float(m_match.group(1)) / 60.0
+
+    if h_match or m_match:
+        return hours
+
+    # Try plain number as hours
+    try:
+        return float(duration_str)
+    except ValueError:
+        return None
+
+
+@cli.group(name="track", invoke_without_command=True)
+@click.argument("duration", required=False)
+@click.argument("description", required=False)
+@click.option("--story", "-s", "story_number", help="Story number (defaults to current story)")
+@click.option("--remaining", "-r", "remaining", help="Estimated hours remaining (e.g., 4h, 2.5h)")
+@click.pass_context
+@handle_errors
+def track_group(
+    ctx: click.Context,
+    duration: str | None,
+    description: str | None,
+    story_number: str | None,
+    remaining: str | None,
+) -> None:
+    """Track time against stories.
+
+    Log time with: v1 track <duration> "<description>"
+
+    Duration formats: 5h, 2.5h, 30m, 1h30m, 1:30
+
+    Examples:
+
+        v1 track 2h "Implemented login feature"
+
+        v1 track 30m "Code review" -s S-12345
+
+        v1 track 2h "Feature work" -r 4h   # 4h remaining
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+
+    # Default command: log time
+    if not duration:
+        console.print("[yellow]Usage:[/yellow] v1 track <duration> \"<description>\"")
+        console.print("\nOr use a subcommand:")
+        console.print("  v1 track list    - Show unsynced entries")
+        console.print("  v1 track story   - Set/show current story")
+        console.print("  v1 track move    - Move entry to different story")
+        console.print("  v1 track delete  - Delete an entry")
+        console.print("  v1 track sync    - Push entries to VersionOne")
+        return
+
+    if not description:
+        console.print("[red]Description is required.[/red]")
+        console.print("Usage: v1 track <duration> \"<description>\"")
+        raise SystemExit(1)
+
+    hours = parse_duration(duration)
+    if hours is None or hours <= 0:
+        console.print(f"[red]Invalid duration:[/red] {duration}")
+        console.print("Examples: 5h, 2.5h, 30m, 1h30m, 1:30")
+        raise SystemExit(1)
+
+    # Parse remaining if provided
+    remaining_hours: float | None = None
+    if remaining:
+        remaining_hours = parse_duration(remaining)
+        if remaining_hours is None or remaining_hours < 0:
+            console.print(f"[red]Invalid remaining duration:[/red] {remaining}")
+            console.print("Examples: 4h, 2.5h, 30m")
+            raise SystemExit(1)
+
+    # Resolve story
+    async def _add_entry() -> None:
+        story_oid: str | None = None
+        story_num: str | None = None
+
+        if story_number:
+            # Use provided story
+            async with V1Client() as client:
+                # Check if it's a row number from stories cache
+                if story_number.isdigit():
+                    cached = storage.get_cached_story(int(story_number))
+                    if cached:
+                        story_num, story_oid = cached
+                if not story_oid:
+                    story = await client.get_story_by_number(story_number)
+                    if story:
+                        story_oid = story.oid
+                        story_num = story.number
+        else:
+            # Use current story
+            current = storage.get_current_story()
+            if current:
+                story_oid, story_num = current
+
+        if not story_oid or not story_num:
+            console.print("[red]No story specified and no current story set.[/red]")
+            console.print("Use 'v1 track story <number>' to set one, or use --story/-s option.")
+            raise SystemExit(1)
+
+        project_oid = storage.get_default_project_oid() or ""
+        entry = storage.add_time_entry(
+            hours=hours,  # type: ignore
+            description=description,  # type: ignore
+            story_oid=story_oid,
+            story_number=story_num,
+            project_oid=project_oid,
+            remaining=remaining_hours,
+        )
+        console.print(f"[green]Logged {hours:.1f}h to {story_num}[/green]")
+        if remaining_hours is not None:
+            console.print(f"  {description} [dim]({remaining_hours:.1f}h remaining)[/dim]")
+        else:
+            console.print(f"  {description}")
+
+    run_async(_add_entry())
+
+
+@track_group.command(name="list")
+@click.option("--all", "-a", "show_all", is_flag=True, help="Include synced entries")
+@click.option("--format", "-f", "output_format", type=click.Choice(["table", "json"]), default="table")
+@handle_errors
+def track_list(show_all: bool, output_format: str) -> None:
+    """List time entries (unsynced by default)."""
+    entries = storage.load_time_entries()
+
+    if not show_all:
+        entries = [e for e in entries if not e.synced]
+
+    if not entries:
+        if show_all:
+            console.print("[yellow]No time entries found.[/yellow]")
+        else:
+            console.print("[yellow]No unsynced time entries.[/yellow]")
+        return
+
+    if output_format == "json":
+        data = [e.model_dump() for e in entries]
+        console.print(json.dumps(data, indent=2))
+        return
+
+    # Table format
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("#", style="dim", width=3)
+    table.add_column("Hours", justify="right", width=6)
+    table.add_column("Left", justify="right", width=6)
+    table.add_column("Story", width=10)
+    table.add_column("Description")
+    table.add_column("Created", width=16)
+    if show_all:
+        table.add_column("Status", width=8)
+
+    total_hours = 0.0
+    for i, entry in enumerate(entries, 1):
+        hours_str = f"{entry.hours:.1f}h"
+        remaining_str = f"{entry.remaining:.1f}h" if entry.remaining is not None else "-"
+        created = entry.created_at[:16].replace("T", " ")
+        row = [str(i), hours_str, remaining_str, entry.story_number, entry.description, created]
+        if show_all:
+            status = "[green]synced[/green]" if entry.synced else "[yellow]pending[/yellow]"
+            row.append(status)
+        table.add_row(*row)
+        if not entry.synced:
+            total_hours += entry.hours
+
+    console.print(table)
+    if not show_all:
+        console.print(f"\n[dim]Total unsynced: {total_hours:.1f}h[/dim]")
+
+
+@track_group.command(name="story")
+@click.argument("story_number", required=False)
+@handle_errors
+def track_story(story_number: str | None) -> None:
+    """Set or show the current story for time tracking.
+
+    Without arguments, shows the current story.
+    With STORY_NUMBER, sets it as the current story.
+
+    Examples:
+
+        v1 track story           # Show current story
+
+        v1 track story S-12345   # Set current story
+
+        v1 track story 3         # Use row #3 from last 'v1 stories'
+    """
+    if not story_number:
+        # Show current story
+        current = storage.get_current_story()
+        if current:
+            story_oid, story_num = current
+            console.print(f"[green]Current story:[/green] {story_num}")
+        else:
+            console.print("[yellow]No current story set.[/yellow]")
+            console.print("Use 'v1 track story <number>' to set one.")
+        return
+
+    async def _set_story() -> None:
+        story_oid: str | None = None
+        story_num: str | None = None
+
+        async with V1Client() as client:
+            # Check if it's a row number from stories cache
+            if story_number.isdigit():
+                cached = storage.get_cached_story(int(story_number))
+                if cached:
+                    story_num, story_oid = cached
+
+            if not story_oid:
+                story = await client.get_story_by_number(story_number)
+                if story:
+                    story_oid = story.oid
+                    story_num = story.number
+
+            if not story_oid or not story_num:
+                console.print(f"[red]Story not found:[/red] {story_number}")
+                raise SystemExit(1)
+
+            storage.set_current_story(story_oid, story_num)
+            console.print(f"[green]Current story set:[/green] {story_num}")
+
+    run_async(_set_story())
+
+
+@track_group.command(name="move")
+@click.argument("entry_id")
+@click.argument("story_number")
+@handle_errors
+def track_move(entry_id: str, story_number: str) -> None:
+    """Move a time entry to a different story.
+
+    ENTRY_ID is the row number from 'v1 track list'.
+    STORY_NUMBER is the target story (S-nnnnn or row number from 'v1 stories').
+    """
+    # Get entry by index
+    if not entry_id.isdigit():
+        console.print(f"[red]Invalid entry ID:[/red] {entry_id}")
+        console.print("Use the row number from 'v1 track list'.")
+        raise SystemExit(1)
+
+    entry = storage.get_entry_by_index(int(entry_id))
+    if not entry:
+        console.print(f"[red]Entry not found:[/red] {entry_id}")
+        raise SystemExit(1)
+
+    async def _move() -> None:
+        story_oid: str | None = None
+        story_num: str | None = None
+
+        async with V1Client() as client:
+            # Check if it's a row number from stories cache
+            if story_number.isdigit():
+                cached = storage.get_cached_story(int(story_number))
+                if cached:
+                    story_num, story_oid = cached
+
+            if not story_oid:
+                story = await client.get_story_by_number(story_number)
+                if story:
+                    story_oid = story.oid
+                    story_num = story.number
+
+            if not story_oid or not story_num:
+                console.print(f"[red]Story not found:[/red] {story_number}")
+                raise SystemExit(1)
+
+            if storage.move_entry(entry.id, story_oid, story_num):
+                console.print(f"[green]Moved entry #{entry_id} to {story_num}[/green]")
+            else:
+                console.print("[red]Cannot move synced entry.[/red]")
+                raise SystemExit(1)
+
+    run_async(_move())
+
+
+@track_group.command(name="delete")
+@click.argument("entry_id")
+@click.option("--force", "-f", is_flag=True, help="Delete without confirmation")
+@handle_errors
+def track_delete(entry_id: str, force: bool) -> None:
+    """Delete an unsynced time entry.
+
+    ENTRY_ID is the row number from 'v1 track list'.
+    """
+    if not entry_id.isdigit():
+        console.print(f"[red]Invalid entry ID:[/red] {entry_id}")
+        console.print("Use the row number from 'v1 track list'.")
+        raise SystemExit(1)
+
+    entry = storage.get_entry_by_index(int(entry_id))
+    if not entry:
+        console.print(f"[red]Entry not found:[/red] {entry_id}")
+        raise SystemExit(1)
+
+    if not force:
+        console.print(f"Delete entry #{entry_id}?")
+        remaining_info = f" ({entry.remaining:.1f}h left)" if entry.remaining is not None else ""
+        console.print(f"  {entry.hours:.1f}h{remaining_info} - {entry.story_number} - {entry.description}")
+        if not click.confirm("Confirm"):
+            console.print("[yellow]Cancelled.[/yellow]")
+            return
+
+    if storage.delete_entry(entry.id):
+        console.print(f"[green]Deleted entry #{entry_id}[/green]")
+    else:
+        console.print("[red]Cannot delete synced entry.[/red]")
+        raise SystemExit(1)
+
+
+@track_group.command(name="sync")
+@click.option("--dry-run", "-n", is_flag=True, help="Show what would be synced without syncing")
+@handle_errors
+def track_sync(dry_run: bool) -> None:
+    """Push unsynced time entries to VersionOne.
+
+    Creates Actual assets in V1 for each unsynced entry.
+    """
+    entries = storage.get_unsynced_entries()
+
+    if not entries:
+        console.print("[yellow]No unsynced time entries to sync.[/yellow]")
+        return
+
+    if dry_run:
+        console.print("[bold]Would sync the following entries:[/bold]\n")
+        for entry in entries:
+            remaining_info = f" ({entry.remaining:.1f}h left)" if entry.remaining is not None else ""
+            console.print(f"  {entry.story_number}: {entry.hours:.1f}h{remaining_info} - {entry.description}")
+        console.print(f"\n[dim]Total: {sum(e.hours for e in entries):.1f}h[/dim]")
+        return
+
+    async def _sync() -> None:
+        settings = get_settings()
+        member_oid = settings.member_oid
+
+        async with V1Client() as client:
+            console.print(f"[bold]Syncing {len(entries)} entries to VersionOne...[/bold]\n")
+
+            success_count = 0
+            for entry in entries:
+                try:
+                    actual_oid = await client.create_actual(
+                        workitem_oid=entry.story_oid,
+                        hours=entry.hours,
+                        description=entry.description,
+                        member_oid=member_oid,
+                    )
+                    storage.mark_entry_synced(entry.id, actual_oid)
+                    remaining_info = f" ({entry.remaining:.1f}h left)" if entry.remaining is not None else ""
+                    console.print(f"  [green]✓[/green] {entry.story_number}: {entry.hours:.1f}h{remaining_info} - {entry.description}")
+                    success_count += 1
+                except V1APIError as e:
+                    console.print(f"  [red]✗[/red] {entry.story_number}: {entry.hours:.1f}h - {e}")
+
+            console.print(f"\n[green]Synced {success_count}/{len(entries)} entries.[/green]")
+
+    run_async(_sync())
+
+
 if __name__ == "__main__":
     cli()

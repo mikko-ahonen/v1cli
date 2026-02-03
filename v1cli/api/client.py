@@ -884,6 +884,37 @@ class V1Client:
             for item in results
         ]
 
+    async def create_actual(
+        self,
+        workitem_oid: str,
+        hours: float,
+        description: str,
+        member_oid: str | None = None,
+        date: str | None = None,
+    ) -> str:
+        """Create an Actual (time entry) in VersionOne.
+
+        Args:
+            workitem_oid: The Story or Task OID to log time against
+            hours: Hours worked
+            description: Description of work performed
+            member_oid: Member OID (defaults to current user)
+            date: Date of work (ISO format, defaults to today)
+
+        Returns:
+            The created Actual's OID
+        """
+        data: dict[str, Any] = {
+            "Workitem": workitem_oid,
+            "Value": hours,
+            "Name": description,
+        }
+        if member_oid:
+            data["Member"] = member_oid
+        if date:
+            data["Date"] = date
+        return await self._create("Actual", data)
+
     async def get_feature_by_number(self, identifier: str) -> Feature | None:
         """Get a feature by its display number (e.g., E-100) or OID (e.g., Epic:100).
 

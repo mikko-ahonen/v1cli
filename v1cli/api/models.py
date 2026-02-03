@@ -110,3 +110,19 @@ class StatusInfo(BaseModel):
 
     oid: str = Field(description="Status OID, e.g., 'StoryStatus:134'")
     name: str = Field(description="Status name, e.g., 'In Progress'")
+
+
+class TimeEntry(BaseModel):
+    """A local time entry pending sync to VersionOne."""
+
+    id: str = Field(description="Local UUID for the entry")
+    hours: float = Field(description="Hours logged")
+    description: str = Field(description="Required description of work done")
+    remaining: float | None = Field(default=None, description="Estimated hours remaining")
+    story_oid: str = Field(description="Story OID to log time against")
+    story_number: str = Field(default="", description="Story display number")
+    project_oid: str = Field(default="", description="Project OID")
+    created_at: str = Field(description="ISO timestamp when entry was created")
+    synced: bool = Field(default=False, description="Whether entry has been synced")
+    synced_at: str | None = Field(default=None, description="ISO timestamp when synced")
+    actual_oid: str | None = Field(default=None, description="V1 Actual OID after sync")

@@ -104,6 +104,10 @@ class Settings(BaseModel):
     # Status mapping (discovered during setup)
     status_mapping: StatusMapping = Field(default_factory=StatusMapping)
 
+    # Current story for time tracking
+    current_story_oid: str | None = Field(default=None, description="Current story OID for time tracking")
+    current_story_number: str | None = Field(default=None, description="Current story display number")
+
     def get_bookmark(self, identifier: str) -> ProjectBookmark | None:
         """Find a bookmark by name, project number, V1 number, or OID.
 
